@@ -1,0 +1,52 @@
+# ---------------------------------------------------------------
+# Unity generated folders. These are rebuilt by the Editor on open
+# and must never be committed (they are gigabytes and churn constantly).
+# ---------------------------------------------------------------
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+
+# Asset meta data should only be ignored when the corresponding asset is also ignored
+!/[Aa]ssets/**/*.meta
+
+# Gradle / Android build output
+/[Ee]xport*/
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# Visual Studio / Rider / VS Code caches
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.unityproj
+*.sln
+*.slnx
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Crash reports
+sysinfo.txt
+crashlytics-build.properties
