@@ -168,11 +168,14 @@ namespace RiftRally.Gameplay
             _rb.angularVelocity = new Vector3(0f, spin, 0f);
         }
 
-        /// <summary>Pushes the stone mid-flight. Used by rink modifiers such as the current.</summary>
-        public void AddExternalForce(Vector3 force)
+        /// <summary>
+        /// Pushes the stone mid-flight, in m/s^2. Acceleration mode keeps the effect
+        /// independent of stone mass, so modifier strengths stay predictable.
+        /// </summary>
+        public void AddExternalAcceleration(Vector3 acceleration)
         {
             if (State != StoneState.InFlight) return;
-            _rb.AddForce(force, ForceMode.Force);
+            _rb.AddForce(acceleration, ForceMode.Acceleration);
         }
 
         /// <summary>Teleports a sliding stone, preserving speed. Used by the warp gate.</summary>

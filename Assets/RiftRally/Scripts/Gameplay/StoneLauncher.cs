@@ -87,6 +87,25 @@ namespace RiftRally.Gameplay
             State = LauncherState.Ready;
         }
 
+        /// <summary>
+        /// Spawns and immediately launches a stone on behalf of the AI. Routed through the
+        /// launcher so that AI and human throws create stones the exact same way.
+        /// </summary>
+        public Stone ThrowForAi(PlayerSide player, Vector3 direction, float speed)
+        {
+            CurrentPlayer = player;
+            _anchor = Playfield.LaunchPointWorld(player);
+
+            SpawnDockedStone(player);
+            if (ActiveStone == null) return null;
+
+            direction.y = 0f;
+            ActiveStone.Launch(direction.normalized * speed, 0f);
+            State = LauncherState.Thrown;
+            StoneThrown?.Invoke(ActiveStone, speed);
+            return ActiveStone;
+        }
+
         /// <summary>Stops accepting input, e.g. between rounds or during a cut-scene.</summary>
         public void EndTurn()
         {
