@@ -1,5 +1,6 @@
 using UnityEngine;
 using RiftRally.Core;
+using RiftRally.Presentation;
 
 namespace RiftRally.Gameplay
 {
@@ -41,6 +42,10 @@ namespace RiftRally.Gameplay
         private float _slowTimer;
         private float _lifeTime;
         private Vector3 _lastContactPoint;
+        private float _charge;
+        private float _dockAge = 1f;
+        private Vector3 _bodyBaseScale = Vector3.one;
+        private Transform _body;
 
         /// <summary>Raised when this stone comes to rest. Argument is the stone itself.</summary>
         public event System.Action<Stone> Settled;
@@ -67,6 +72,9 @@ namespace RiftRally.Gameplay
                             | RigidbodyConstraints.FreezeRotationZ;
 
             _collider.radius = GameConfig.StoneRadius;
+
+            _body = transform.Find("Body");
+            if (_body != null) _bodyBaseScale = _body.localScale;
         }
 
         private void OnDestroy()
@@ -105,7 +113,37 @@ namespace RiftRally.Gameplay
             }
 
             SetState(StoneState.Docked);
+            _dockAge = 0f;
             if (Rink.Instance != null) Rink.Instance.Register(this);
+        }
+
+        /// <summary>
+        /// Visual feedback for how far the stone has been pulled back, 0-1.
+        ///
+        /// The stone swells and brightens with the pull. This matters because a player aiming
+        /// with their hand is looking at their hand, not at the aim line out on the ice, and
+        /// without it they have no read on power in their central vision.
+        /// </summary>
+        public void SetChargeVisual(float charge01)
+        {
+            _charge = Mathf.Clamp01(charge01);
+        }
+
+        private void Update()
+        {
+            if (_dockAge < 1f) _dockAge = Mathf.Min(1f, _dockAge + Time.deltaTime * 2.6f);
+
+            if (_body == null) return;
+
+            // A springy arrival on docking, then a swell that tracks the pull.
+            float dock = Easing.OutElastic(_dockAge);
+            float swell = 1f + _charge * 0.14f;
+            Vector3 target = _bodyBaseScale * dock * swell;
+
+            _body.localScale = Easing.Damp(_body.localScale, target, 18f, Time.deltaTime);
+
+            if (GlowLight != null)
+                GlowLight.intensity = 0.35f + _charge * 0.9f;
         }
 
         // ---------------------------------------------------------------- state

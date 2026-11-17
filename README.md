@@ -4,8 +4,11 @@ A hand-tracked VR table game for Meta Quest. You sit at a glowing rink the size 
 table, pinch a stone, pull it back like a slingshot and let go. Closest stone to the centre
 takes the round — and from round two onwards the rink itself starts fighting back.
 
-Built for the MetaVR hackathon with Unity 6 (URP), OpenXR and XR Hands. No controllers: the
-whole game is pinch, pull, release.
+Play solo against the AI, or 1v1 online — quick match a stranger, or read a four-character
+room code out to a friend. Guests and registered accounts share one leaderboard.
+
+Built for the MetaVR hackathon with Unity 6 (URP), OpenXR and XR Hands, with a Node
+multiplayer service on Render. No controllers: the whole game is pinch, pull, release.
 
 ---
 
@@ -17,6 +20,7 @@ whole game is pinch, pull, release.
 | **Score** | Curling's rule: only the side with the closest stone scores, and it scores one point for every stone of its own that is closer than the opponent's best. |
 | **Match** | Best of three rounds, three stones each per round. Losing a round earns the hammer (last stone) in the next one. |
 | **Twists** | Round one is a clean rink. Every round after that reveals a modifier that changes where a smart player aims. |
+| **Online** | 1v1 by room code or quick match. Leaderboard ranks guests and accounts together; a guest who signs up keeps the rating they already earned. |
 
 ### The modifiers
 
@@ -28,6 +32,32 @@ The design rule for every modifier is that it must change where a good player ai
 that only changes how the rink looks would make rounds feel varied while playing identically.
 
 ---
+
+## Download size, and what "4K" means here
+
+The Quest build is **46 MB**. There is nothing to compress: the rink, the stones, the rings,
+the hands, the HUD and every effect are generated in code at runtime, and all seven sounds are
+synthesised at load. The repository carries no textures, no meshes and no audio files, so the
+APK is essentially just the Unity runtime.
+
+On resolution, the honest version: a headset has a fixed panel, so a game cannot output 4K to
+it. What it controls is the size of the eye buffer rendered *before* that buffer is sampled
+onto the panel. Rendering above panel resolution and downsampling — supersampling — is what
+removes shimmer from thin bright geometry, and this game is almost entirely thin bright
+geometry: ring outlines, aim lines, trails. So that is the dial that matters here, and
+[`QualityTuner.cs`](Assets/RiftRally/Scripts/Setup/QualityTuner.cs) sets it:
+
+| Preset | Eye texture scale | MSAA | For |
+|---|---|---|---|
+| Crisp | 1.4× | 4× | Quest 3 and up |
+| Balanced *(default)* | 1.2× | 4× | Quest 2, comfortable headroom |
+| Fast | 1.0× | 2× | fallback when frames are being missed |
+
+MSAA rather than post-process antialiasing, because on a tiled mobile GPU it is nearly free
+and, unlike FXAA or TAA, it does not blur — and a smeared aim line in a throwing game is lost
+information. Quality steps itself down automatically if the frame budget is missed for four
+seconds straight; holding the refresh rate matters more than any of this, because dropping
+frames in VR is not "choppy", it is nauseating.
 
 ## Running it
 
@@ -68,17 +98,26 @@ Unity.exe -batchmode -quit -projectPath . \
   -executeMethod RiftRally.EditorTools.RiftRallyBuild.Windows
 ```
 
+### Multiplayer
+
+The server lives in [`server/`](server/) and deploys to Render from the
+[`render.yaml`](render.yaml) blueprint — see [server/README.md](server/README.md) for the
+deploy steps, the API and the protocol. Once deployed, set the service URL on the
+`GameBootstrap` component's **Server Url** field and rebuild.
+
 ### Tests
 
 ```
 Unity.exe -runTests -batchmode -projectPath . -testPlatform EditMode  -testResults EditMode.xml
 Unity.exe -runTests -batchmode -projectPath . -testPlatform PlayMode  -testResults PlayMode.xml
+cd server && npm test
 ```
 
-EditMode covers the rink geometry and the tuning invariants. PlayMode runs real physics
-frames: stones must stop where the analytic model says they will (the aim preview and the AI
-both depend on that), and an AI-versus-AI match is played end to end at eight times speed to
-prove the match loop cannot stall.
+EditMode covers the rink geometry, the tuning invariants, the hand-filter behaviour and the
+wire format. PlayMode runs real physics frames: stones must stop where the analytic model says
+they will (the aim preview and the AI both depend on that), and an AI-versus-AI match is played
+end to end at eight times speed to prove the match loop cannot stall. The server suite plays a
+complete match between two real WebSocket clients.
 
 ---
 
@@ -87,13 +126,17 @@ prove the match loop cannot stall.
 ```
 Assets/RiftRally/
   Scripts/
-    Core/         GameConfig, HandInput, MatchManager, ScoreKeeper
+    Core/         GameConfig, HandInput, OneEuroFilter, PointerInput,
+                  MatchManager, ScoreKeeper
     Gameplay/     Rink, Stone, StoneLauncher, AimPreview, AiOpponent
     Modifiers/    RinkModifier + Current, Bumpers, WarpGates, ModifierDirector
-    Presentation/ MatchHud, TextPanel, AudioDirector
-    Setup/        GameBootstrap, RinkBuilder, ProceduralArt
+    Presentation/ MatchHud, MainMenu, PinchButton, HandVisuals, StoneVfx,
+                  HouseGlow, SlowMotion, Easing, TextPanel, AudioDirector
+    Net/          RiftNetClient, NetMatchDriver, NetProtocol
+    Setup/        GameBootstrap, RinkBuilder, ProceduralArt, QualityTuner
   Editor/         Scene generator, command-line build entry points
   Tests/          EditMode and PlayMode suites
+server/           Node multiplayer service (see server/README.md)
 ```
 
 A handful of decisions are worth knowing before changing anything:
@@ -122,7 +165,31 @@ shot landed.
 
 **The HUD only listens.** It subscribes to `MatchManager` events and never calls back into it,
 which is why the match loop can be driven headlessly by a test or by the attract demo with no
-UI attached.
+UI attached — and why an online match, driven entirely by the server through
+`MatchManager.External*`, lights up the same HUD, audio and house glow without any of them
+knowing they are online.
+
+**Hand positions are one-euro filtered.** Raw tracked joints jitter by millimetres every
+frame, and a plain low-pass filter trades that jitter for lag, which on a throw is worse. A
+one-euro filter smooths hard while the hand is still and barely at all while it moves fast, so
+a held stone sits rock steady and a quick pull still tracks the hand. Its beta is unit
+dependent and that is the trap — the literature's value assumes pixels, and using it on metres
+left 86 mm of lag on a normal pull. There is a test for exactly that.
+
+**Nothing in VR moves the camera.** Slow motion scales time, never the view; impacts flash
+lights and emission, never the head. Camera shake and view-space effects are the fastest route
+to motion sickness, so the drama is all in the world.
+
+**Menus are physical.** The lobby is a board standing on the table that you press with your
+finger and a pinch, not a head-locked panel with a laser pointer. Direct touch is steadier
+with hand tracking, it reuses the one gesture the game already teaches, and the room keeps
+feeling like a room.
+
+**Your own throw is never networked while you make it.** Online, you throw against local
+physics with zero latency and report the result; the opponent replays your launch and then
+adopts the authoritative positions. The server scores the rink, so the leaderboard cannot be
+faked even though stone positions are client-reported. The full reasoning, and its limits, is
+in [server/README.md](server/README.md).
 
 ---
 

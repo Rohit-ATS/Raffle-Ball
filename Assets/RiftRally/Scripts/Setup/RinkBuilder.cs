@@ -36,14 +36,14 @@ namespace RiftRally.Setup
                     Table = ProceduralArt.MakeMaterial(new Color(0.09f, 0.10f, 0.13f), 0f, 0.25f),
                     Ice = ProceduralArt.MakeMaterial(new Color(0.11f, 0.15f, 0.22f), 0.15f, 0.90f),
                     Wall = ProceduralArt.MakeMaterial(new Color(0.20f, 0.24f, 0.32f), 0.10f, 0.55f),
-                    RingOuter = ProceduralArt.MakeMaterial(new Color(0.20f, 0.42f, 0.55f), 1.1f),
-                    RingMiddle = ProceduralArt.MakeMaterial(new Color(0.35f, 0.70f, 0.80f), 1.6f),
-                    RingInner = ProceduralArt.MakeMaterial(GameConfig.TargetColor, 2.6f),
-                    Marking = ProceduralArt.MakeMaterial(new Color(0.55f, 0.62f, 0.72f), 0.6f),
-                    Glow = ProceduralArt.MakeMaterial(Color.white, 2.0f),
+                    RingOuter = ProceduralArt.MakeGlowMaterial(new Color(0.20f, 0.42f, 0.55f), 1.1f),
+                    RingMiddle = ProceduralArt.MakeGlowMaterial(new Color(0.35f, 0.70f, 0.80f), 1.6f),
+                    RingInner = ProceduralArt.MakeGlowMaterial(GameConfig.TargetColor, 2.6f),
+                    Marking = ProceduralArt.MakeGlowMaterial(new Color(0.55f, 0.62f, 0.72f), 0.6f),
+                    Glow = ProceduralArt.MakeGlowMaterial(Color.white, 2.0f),
                     StoneBody = ProceduralArt.MakeMaterial(Color.white, 0.6f, 0.75f, 0.2f),
                     PostBody = ProceduralArt.MakeMaterial(new Color(0.95f, 0.78f, 0.25f), 1.3f),
-                    CurrentBand = ProceduralArt.MakeMaterial(new Color(0.30f, 0.85f, 0.95f), 1.0f)
+                    CurrentBand = ProceduralArt.MakeGlowMaterial(new Color(0.30f, 0.85f, 0.95f), 1.0f)
                 };
             }
         }
@@ -57,6 +57,9 @@ namespace RiftRally.Setup
             public ModifierDirector Director;
             public AimPreview Preview;
             public Palette Colors;
+
+            /// <summary>Ring renderers, outermost first, for the house glow.</summary>
+            public Renderer[] RingRenderers;
         }
 
         /// <summary>
@@ -141,6 +144,7 @@ namespace RiftRally.Setup
 
             var radii = GameConfig.RingRadii;   // outermost first
             var ringMats = new[] { palette.RingOuter, palette.RingMiddle, palette.RingInner };
+            var ringRenderers = new Renderer[radii.Length];
 
             for (int i = 0; i < radii.Length; i++)
             {
@@ -148,16 +152,13 @@ namespace RiftRally.Setup
                 float inner = i + 1 < radii.Length ? radii[i + 1] : 0f;
                 Material mat = ringMats[Mathf.Min(i, ringMats.Length - 1)];
 
-                if (inner <= 0.0001f)
-                {
-                    ProceduralArt.Disc(targetRoot, $"Ring{i}", new Vector3(0f, i * 0.0004f, 0f),
-                                       outer, mat);
-                }
-                else
-                {
-                    ProceduralArt.Ring(targetRoot, $"Ring{i}", new Vector3(0f, i * 0.0004f, 0f),
-                                       inner, outer, mat);
-                }
+                GameObject ring = inner <= 0.0001f
+                    ? ProceduralArt.Disc(targetRoot, $"Ring{i}", new Vector3(0f, i * 0.0004f, 0f),
+                                         outer, mat)
+                    : ProceduralArt.Ring(targetRoot, $"Ring{i}", new Vector3(0f, i * 0.0004f, 0f),
+                                         inner, outer, mat);
+
+                ringRenderers[i] = ring.GetComponent<Renderer>();
             }
 
             // Thin bright outlines make the ring edges readable at a glance in a headset.
@@ -172,7 +173,7 @@ namespace RiftRally.Setup
             {
                 Vector3 world = rink.LaunchPointWorld(side);
                 Vector3 local = surface.InverseTransformPoint(world);
-                var mat = ProceduralArt.MakeMaterial(side.ToColor(), 1.4f);
+                var mat = ProceduralArt.MakeGlowMaterial(side.ToColor(), 1.4f);
 
                 ProceduralArt.Ring(surface, $"LaunchPad_{side}",
                     new Vector3(local.x, 0.0014f, local.z),
@@ -202,7 +203,8 @@ namespace RiftRally.Setup
                 StoneTemplate = stoneTemplate,
                 Director = director,
                 Preview = preview,
-                Colors = palette
+                Colors = palette,
+                RingRenderers = ringRenderers
             };
         }
 
@@ -277,6 +279,25 @@ namespace RiftRally.Setup
             // The disc is built at radius 1 so the preview can scale it directly.
             pip.transform.localScale = new Vector3(0.02f, 1f, 0.02f);
             preview.PowerPip = pip.transform;
+
+            // The stop ring is drawn at stone scale, so the player reads "my stone ends up
+            // exactly there" rather than "somewhere around there".
+            var stopMat = ProceduralArt.MakeGlowMaterial(GameConfig.TargetColor, 2.4f);
+            var stop = ProceduralArt.Ring(go.transform, "StopRing", Vector3.zero,
+                GameConfig.StoneRadius * 0.92f, GameConfig.StoneRadius * 1.22f, stopMat);
+            preview.StopRing = stop.transform;
+            stop.SetActive(false);
+
+            var bounceMat = ProceduralArt.MakeGlowMaterial(new Color(1f, 0.85f, 0.45f), 2.6f);
+            var markers = new Transform[2];
+            for (int i = 0; i < markers.Length; i++)
+            {
+                var marker = ProceduralArt.Ring(go.transform, $"Bounce{i}", Vector3.zero,
+                                                0.009f, 0.015f, bounceMat);
+                marker.SetActive(false);
+                markers[i] = marker.transform;
+            }
+            preview.BounceMarkers = markers;
 
             return preview;
         }
@@ -404,7 +425,7 @@ namespace RiftRally.Setup
             visuals.SetParent(surface, false);
 
             float halfW = GameConfig.RinkWidth * 0.5f;
-            var gateMat = ProceduralArt.MakeMaterial(new Color(0.65f, 0.40f, 1.00f), 2.2f);
+            var gateMat = ProceduralArt.MakeGlowMaterial(new Color(0.65f, 0.40f, 1.00f), 2.2f);
 
             // Gate A sits near the left wall on the player's half; the exit gate sits on the
             // far right and faces down the rink, so a stone fed into A is spat out on a new
@@ -440,7 +461,7 @@ namespace RiftRally.Setup
             // the player actually views the table from.
             ProceduralArt.Ring(gate, "Mouth", new Vector3(0f, 0.0018f, 0f), 0.048f, 0.058f, gateMat);
             ProceduralArt.Disc(gate, "Pool", new Vector3(0f, 0.0010f, 0f), 0.046f,
-                               ProceduralArt.MakeMaterial(new Color(0.30f, 0.12f, 0.55f), 0.8f));
+                               ProceduralArt.MakeGlowMaterial(new Color(0.30f, 0.12f, 0.55f), 0.8f));
 
             for (int s = -1; s <= 1; s += 2)
             {

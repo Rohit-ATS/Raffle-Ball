@@ -14,7 +14,15 @@ namespace RiftRally.Core
         /// Both sides played by the AI. Drives the attract-mode demo match, and lets the
         /// whole match loop be exercised by an automated test with no hands attached.
         /// </summary>
-        AiVsAi
+        AiVsAi,
+
+        /// <summary>
+        /// A networked 1v1. The match loop is not run locally at all: the server owns the
+        /// turn order and the score, and drives this manager through the External* methods
+        /// below. The events raised are identical either way, which is why the HUD, the
+        /// audio and the house glow all work online without knowing that they are online.
+        /// </summary>
+        Online
     }
 
     public enum MatchState
@@ -96,7 +104,9 @@ namespace RiftRally.Core
             if (Launcher != null) Launcher.StoneThrown += OnStoneThrown;
 
             SetState(MatchState.Attract);
-            if (AutoStart) StartMatch(Mode);
+
+            // An online match is driven by the server, so the local loop must not run.
+            if (AutoStart && Mode != GameMode.Online) StartMatch(Mode);
         }
 
         private void OnDisable()
@@ -108,6 +118,14 @@ namespace RiftRally.Core
 
         public void StartMatch(GameMode mode)
         {
+            if (mode == GameMode.Online)
+            {
+                // Online matches begin when the server says so.
+                Mode = mode;
+                SetState(MatchState.Attract);
+                return;
+            }
+
             Mode = mode;
             Round = 0;
             RoundsWon[0] = RoundsWon[1] = 0;
@@ -263,6 +281,72 @@ namespace RiftRally.Core
             if (ScoreKeeper.IsSteal(Playfield, stone, previousLeader, hadLeader))
                 StealHappened?.Invoke(stone.Owner);
         }
+
+        // ---------------------------------------------------------------- external drive
+        //
+        // Used only in Online mode. Each method mirrors a step the local loop would have
+        // taken, and raises the same event, so every listener is oblivious to the source.
+
+        /// <summary>Resets local match state for a networked match about to begin.</summary>
+        public void ExternalMatchStarted()
+        {
+            Mode = GameMode.Online;
+            Round = 0;
+            RoundsWon[0] = RoundsWon[1] = 0;
+            TotalPoints[0] = TotalPoints[1] = 0;
+            StonesThrownThisRound = 0;
+            _hadLeader = false;
+            if (_loop != null) { StopCoroutine(_loop); _loop = null; }
+        }
+
+        /// <summary>Announces a round and its modifier, as the server chose them.</summary>
+        public void ExternalRoundStarted(int round, RinkModifier modifier)
+        {
+            Round = round;
+            StonesThrownThisRound = 0;
+            _hadLeader = false;
+            SetState(MatchState.RoundIntro);
+            RoundStarted?.Invoke(round, modifier);
+        }
+
+        /// <summary>Announces whose turn it is.</summary>
+        public void ExternalTurnStarted(PlayerSide player, int stoneNumber)
+        {
+            CurrentPlayer = player;
+            SetState(MatchState.PlayerTurn);
+            TurnStarted?.Invoke(player, stoneNumber);
+        }
+
+        /// <summary>Marks the rink as settling, e.g. while a remote throw plays out.</summary>
+        public void ExternalStonesSettling() => SetState(MatchState.StoneSettling);
+
+        /// <summary>Applies the server's round result.</summary>
+        public void ExternalRoundScored(RoundResult result, int[] roundsWon, int[] totalPoints)
+        {
+            if (roundsWon != null && roundsWon.Length >= 2)
+            {
+                RoundsWon[0] = roundsWon[0];
+                RoundsWon[1] = roundsWon[1];
+            }
+            if (totalPoints != null && totalPoints.Length >= 2)
+            {
+                TotalPoints[0] = totalPoints[0];
+                TotalPoints[1] = totalPoints[1];
+            }
+
+            SetState(MatchState.RoundScoring);
+            RoundScored?.Invoke(result);
+        }
+
+        /// <summary>Ends the match with the server's winner.</summary>
+        public void ExternalMatchEnded(PlayerSide winner)
+        {
+            SetState(MatchState.MatchOver);
+            MatchEnded?.Invoke(winner);
+        }
+
+        /// <summary>Fires the steal celebration from a networked event.</summary>
+        public void ExternalSteal(PlayerSide side) => StealHappened?.Invoke(side);
 
         private void SetState(MatchState next)
         {

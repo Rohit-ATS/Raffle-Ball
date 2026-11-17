@@ -1,0 +1,43 @@
+# Render Blueprint for the Rift Rally multiplayer service.
+#
+# Deploy with: Render dashboard -> New -> Blueprint -> point it at this repository.
+# Everything below is created automatically, including the database and the JWT secret.
+#
+# The free plan is deliberate: this service is a turn relay for a 1v1 game, so a whole match
+# is a few kilobytes of JSON. The thing to watch on the free plan is that an idle instance is
+# spun down, which costs the first player a cold start of roughly thirty seconds - the client
+# handles that by showing a "waking the server" state rather than failing.
+
+services:
+  - type: web
+    name: rift-rally-server
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: server
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+
+    # Render routes WebSocket upgrades to the same port as HTTP, so /ws needs no extra config.
+    healthCheckPath: /healthz
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Generated once by Render and kept across deploys, so player sessions survive a
+      # restart. Never commit a real value for this.
+      - key: JWT_SECRET
+        generateValue: true
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rift-rally-db
+          property: connectionString
+
+databases:
+  - name: rift-rally-db
+    plan: free
+    region: oregon
+    databaseName: riftrally
+    user: riftrally

@@ -52,3 +52,13 @@ desktop.ini
 # Crash reports
 sysinfo.txt
 crashlytics-build.properties
+
+# ---------------------------------------------------------------
+# Multiplayer server (server/). Node dependencies are restored by
+# `npm ci` from package-lock.json and must never be committed.
+# ---------------------------------------------------------------
+node_modules/
+npm-debug.log*
+.env
+.env.local
+*.tsbuildinfo

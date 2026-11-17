@@ -1,5 +1,6 @@
 using UnityEngine;
 using RiftRally.Core;
+using RiftRally.Presentation;
 
 namespace RiftRally.Gameplay
 {
@@ -30,8 +31,17 @@ namespace RiftRally.Gameplay
         [Tooltip("How quickly the held stone chases the pinch point. Lower = smoother, laggier.")]
         public float FollowSharpness = 22f;
 
+        [Tooltip("Spring frequency for the held stone, in Hz. Higher is tighter to the hand.")]
+        public float FollowSpringHz = 4.2f;
+
         [Tooltip("Minimum pull before a release counts as a throw rather than a cancel.")]
         public float MinimumPull = 0.05f;
+
+        [Tooltip("Extra grab reach granted when the hand arrives quickly, in metres.")]
+        public float GrabAssistReach = 0.055f;
+
+        [Tooltip("Material used for stone effects. Assigned by the builder.")]
+        public Material EffectMaterial;
 
         public LauncherState State { get; private set; } = LauncherState.Inactive;
         public PlayerSide CurrentPlayer { get; private set; } = PlayerSide.One;
@@ -45,8 +55,10 @@ namespace RiftRally.Gameplay
 
         private Vector3 _anchor;
         private Vector3 _heldTarget;
+        private Vector3 _heldVelocity;
         private HandSide _grabHand;
         private bool _subscribed;
+        private float _chargeShown;
 
         private void Start()
         {
@@ -106,6 +118,29 @@ namespace RiftRally.Gameplay
             return ActiveStone;
         }
 
+        /// <summary>
+        /// Spawns a stone already at rest at a world position. Used to rebuild the rink from
+        /// an authoritative network snapshot, so online stones are created through exactly
+        /// the same path as thrown ones and therefore carry the same visuals and physics.
+        /// </summary>
+        public Stone SpawnSettledStone(PlayerSide owner, Vector3 world)
+        {
+            if (StonePrefab == null) return null;
+
+            GameObject go = Instantiate(StonePrefab, world, Quaternion.identity);
+            go.name = $"Stone_{owner}_net";
+            if (!go.activeSelf) go.SetActive(true);
+
+            var stone = go.GetComponent<Stone>();
+            if (stone == null) { Destroy(go); return null; }
+
+            stone.Initialise(owner);
+            stone.MoveTo(world);
+            StoneVfx.Attach(stone, EffectMaterial);
+            stone.SetState(StoneState.Settled);
+            return stone;
+        }
+
         /// <summary>Stops accepting input, e.g. between rounds or during a cut-scene.</summary>
         public void EndTurn()
         {
@@ -139,7 +174,11 @@ namespace RiftRally.Gameplay
 
             ActiveStone.Initialise(player);
             ActiveStone.MoveTo(_anchor);
+            StoneVfx.Attach(ActiveStone, EffectMaterial);
+
             _heldTarget = _anchor;
+            _heldVelocity = Vector3.zero;
+            _chargeShown = 0f;
         }
 
         // ---------------------------------------------------------------- input
@@ -151,12 +190,16 @@ namespace RiftRally.Gameplay
             var sample = HandInput.Instance.Get(side);
             if (!sample.IsTracked) return;
 
-            // Only grab if the pinch happened near the docked stone.
+            // Only grab if the pinch happened near the docked stone. The window widens with
+            // hand speed: a player reaching in quickly pinches slightly past the stone before
+            // the tracker catches up, and failing that grab feels like the game ignoring them.
+            float speedAssist = Mathf.Clamp01(sample.Velocity.magnitude / 0.9f) * GrabAssistReach;
             float reach = Vector3.Distance(sample.PinchPoint, ActiveStone.transform.position);
-            if (reach > GameConfig.GrabRadius) return;
+            if (reach > GameConfig.GrabRadius + speedAssist) return;
 
             _grabHand = side;
             _heldTarget = ActiveStone.transform.position;
+            _heldVelocity = Vector3.zero;
             ActiveStone.SetState(StoneState.Held);
             State = LauncherState.Aiming;
             StoneGrabbed?.Invoke();
@@ -174,7 +217,10 @@ namespace RiftRally.Gameplay
                 // Treated as a cancel: put the stone back and let the player try again.
                 ActiveStone.SetState(StoneState.Docked);
                 ActiveStone.MoveTo(_anchor);
+                ActiveStone.SetChargeVisual(0f);
                 _heldTarget = _anchor;
+                _heldVelocity = Vector3.zero;
+                _chargeShown = 0f;
                 State = LauncherState.Ready;
                 if (Preview != null) Preview.Hide();
                 return;
@@ -187,6 +233,9 @@ namespace RiftRally.Gameplay
             // A touch of spin, signed by how far off-centre the pull was, so throws feel alive.
             Vector3 localOffset = Playfield.Surface.InverseTransformDirection(offset);
             float spin = Mathf.Clamp(-localOffset.x * 9f, -4.5f, 4.5f);
+
+            ActiveStone.SetChargeVisual(0f);
+            _chargeShown = 0f;
 
             ActiveStone.Launch(direction * speed, spin);
             State = LauncherState.Thrown;
@@ -217,14 +266,22 @@ namespace RiftRally.Gameplay
                 // Lost tracking mid-pull: dock the stone instead of firing something random.
                 ActiveStone.SetState(StoneState.Docked);
                 ActiveStone.MoveTo(_anchor);
+                ActiveStone.SetChargeVisual(0f);
+                _heldTarget = _anchor;
+                _heldVelocity = Vector3.zero;
+                _chargeShown = 0f;
                 State = LauncherState.Ready;
                 if (Preview != null) Preview.Hide();
                 return;
             }
 
             Vector3 desired = ClampToPullZone(sample.PinchPoint);
-            _heldTarget = Vector3.Lerp(_heldTarget, desired,
-                                       1f - Mathf.Exp(-FollowSharpness * Time.deltaTime));
+
+            // A critically damped spring rather than a lerp: it arrives fast without
+            // overshooting, and because it carries velocity the stone keeps moving smoothly
+            // through a dropped tracking frame instead of stuttering.
+            _heldTarget = Easing.Spring(_heldTarget, ref _heldVelocity, desired,
+                                        FollowSpringHz, Time.deltaTime);
             ActiveStone.MoveTo(_heldTarget);
 
             Vector3 offset = PlanarOffsetFromAnchor(_heldTarget);
@@ -238,6 +295,11 @@ namespace RiftRally.Gameplay
                 Preview.Show(ActiveStone.transform.position, dir, speed, t,
                              CurrentPlayer.ToColor());
             }
+
+            // The stone itself swells slightly as the pull builds, so power is legible even
+            // when the player is looking at their hand rather than at the preview line.
+            _chargeShown = Easing.Damp(_chargeShown, t, 12f, Time.deltaTime);
+            ActiveStone.SetChargeVisual(_chargeShown);
         }
 
         /// <summary>

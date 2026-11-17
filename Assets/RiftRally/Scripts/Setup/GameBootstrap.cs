@@ -1,6 +1,7 @@
 using UnityEngine;
 using RiftRally.Core;
 using RiftRally.Gameplay;
+using RiftRally.Net;
 using RiftRally.Presentation;
 
 namespace RiftRally.Setup
@@ -41,6 +42,28 @@ namespace RiftRally.Setup
 
         [Tooltip("Build the procedural audio.")]
         public bool CreateAudio = true;
+
+        [Header("Polish")]
+        [Tooltip("Draw pinch rings and reach halos on the tracked hands.")]
+        public bool CreateHandVisuals = true;
+
+        [Tooltip("Slow time briefly on hard impacts and decisive shots.")]
+        public bool EnableSlowMotion = true;
+
+        [Tooltip("Apply the VR render quality preset and hold the frame rate budget.")]
+        public bool ApplyQualitySettings = true;
+
+        public QualityTuner.Preset Quality = QualityTuner.Preset.Balanced;
+
+        [Header("Multiplayer")]
+        [Tooltip("Build the network client, the online match driver and the lobby menu.")]
+        public bool EnableMultiplayer = true;
+
+        [Tooltip("Base URL of the multiplayer server.")]
+        public string ServerUrl = "https://rift-rally-server.onrender.com";
+
+        public RiftNetClient NetClient { get; private set; }
+        public MainMenu Menu { get; private set; }
 
         // ---- everything the bootstrap owns, exposed for tests and for tooling ----
         public Rink Playfield { get; private set; }
@@ -93,6 +116,7 @@ namespace RiftRally.Setup
             Launcher.Playfield = Playfield;
             Launcher.StonePrefab = built.StoneTemplate;
             Launcher.Preview = built.Preview;
+            Launcher.EffectMaterial = built.Colors.Glow;
 
             // ---- opponent ----
             var aiGo = new GameObject("AiOpponent");
@@ -122,6 +146,62 @@ namespace RiftRally.Setup
                 Hud = hudGo.AddComponent<MatchHud>();
                 Hud.Match = Match;
                 Hud.Playfield = Playfield;
+            }
+
+
+            if (CreateHandVisuals)
+            {
+                var handsGo = new GameObject("HandVisuals");
+                handsGo.transform.SetParent(transform, false);
+                var visuals = handsGo.AddComponent<HandVisuals>();
+                visuals.Hands = Hands;
+                visuals.Launcher = Launcher;
+            }
+
+            // The house reacts to who is lying closest, which is how the scoring rule is
+            // communicated without a single line of text.
+            var glowGo = new GameObject("HouseGlow");
+            glowGo.transform.SetParent(RinkRoot, false);
+            var glow = glowGo.AddComponent<HouseGlow>();
+            glow.Playfield = Playfield;
+            glow.Rings = built.RingRenderers;
+
+            // Round results and lead changes flash the house. Hooked to the match events
+            // rather than driven from the HUD, so the effect fires even with no UI built.
+            Match.RoundScored += _ => glow.Flash();
+            Match.StealHappened += _ => glow.Flash();
+
+            if (EnableSlowMotion) gameObject.AddComponent<SlowMotion>();
+
+            if (ApplyQualitySettings)
+            {
+                var tuner = gameObject.AddComponent<QualityTuner>();
+                tuner.Quality = Quality;
+            }
+
+            if (EnableMultiplayer)
+            {
+                var netGo = new GameObject("Net");
+                netGo.transform.SetParent(transform, false);
+
+                NetClient = netGo.AddComponent<RiftNetClient>();
+                NetClient.ServerUrl = ServerUrl;
+
+                var driver = netGo.AddComponent<NetMatchDriver>();
+                driver.Net = NetClient;
+                driver.Match = Match;
+                driver.Launcher = Launcher;
+                driver.Playfield = Playfield;
+                driver.Modifiers = built.Director;
+
+                // The lobby is only built when multiplayer is on, because every one of its
+                // screens other than the solo button needs a server to talk to.
+                var menuGo = new GameObject("MainMenu");
+                menuGo.transform.SetParent(transform, false);
+                Menu = menuGo.AddComponent<MainMenu>();
+                Menu.Net = NetClient;
+                Menu.Match = Match;
+                Menu.Playfield = Playfield;
             }
 
             if (CreateAudio)
@@ -207,6 +287,10 @@ namespace RiftRally.Setup
         private void Update()
         {
             if (Match == null || DemoMatch) return;
+
+            // With the lobby built, starting a match is the menu's job: a stray pinch while
+            // reading the leaderboard must not drop the player into a solo game.
+            if (Menu != null) return;
 
             bool waiting = Match.State == MatchState.Attract || Match.State == MatchState.MatchOver;
             if (!waiting) return;

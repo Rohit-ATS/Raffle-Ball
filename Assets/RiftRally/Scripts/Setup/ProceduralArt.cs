@@ -60,6 +60,56 @@ namespace RiftRally.Setup
         }
 
         /// <summary>
+        /// A glowing material that blends additively.
+        ///
+        /// Additive blending is the right choice for every effect in this game - halos,
+        /// trails, sparks, aim paths - for three reasons: it needs no depth sorting, so
+        /// overlapping effects cannot flicker against each other as the head moves; it never
+        /// draws black, so an effect fades out by going dim rather than by going grey; and it
+        /// is the cheapest blend a mobile GPU can do, which matters at 90 Hz on a Quest.
+        /// </summary>
+        public static Material MakeGlowMaterial(Color color, float emission = 2.0f)
+        {
+            var mat = MakeMaterial(color, emission);
+            mat.name = $"RR_Glow_{color}";
+            ConfigureBlend(mat, additive: true);
+            return mat;
+        }
+
+        /// <summary>A see-through material that respects alpha, for panels and shadows.</summary>
+        public static Material MakeTransparentMaterial(Color color, float emission = 0f)
+        {
+            var mat = MakeMaterial(color, emission);
+            mat.name = $"RR_Alpha_{color}";
+            ConfigureBlend(mat, additive: false);
+            return mat;
+        }
+
+        /// <summary>
+        /// Switches a URP Lit material to a blended surface. The float properties and
+        /// keywords have to be set together: URP reads the keywords at render time but the
+        /// floats are what survive a material being saved or inspected.
+        /// </summary>
+        private static void ConfigureBlend(Material mat, bool additive)
+        {
+            const int srcAlpha = 5, one = 1, oneMinusSrcAlpha = 10;
+
+            if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f);     // transparent
+            if (mat.HasProperty("_Blend")) mat.SetFloat("_Blend", additive ? 2f : 0f);
+            if (mat.HasProperty("_SrcBlend")) mat.SetFloat("_SrcBlend", additive ? one : srcAlpha);
+            if (mat.HasProperty("_DstBlend"))
+                mat.SetFloat("_DstBlend", additive ? one : oneMinusSrcAlpha);
+            if (mat.HasProperty("_ZWrite")) mat.SetFloat("_ZWrite", 0f);
+            if (mat.HasProperty("_AlphaClip")) mat.SetFloat("_AlphaClip", 0f);
+            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 2f);            // back faces off
+
+            mat.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            mat.DisableKeyword("_ALPHATEST_ON");
+            mat.SetShaderPassEnabled("ShadowCaster", false);
+            mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+
+        /// <summary>
         /// Creates a box of the given world size. <paramref name="withCollider"/> is false for
         /// pure decoration, which keeps the physics scene as small as possible.
         /// </summary>
