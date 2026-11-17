@@ -77,7 +77,7 @@ test('a guest account is created with a single call and no input', async () => {
     assert.equal(body.player.kind, 'guest');
     assert.ok(body.token, 'a guest must receive a usable token');
     assert.ok(body.player.displayName.length >= 3, 'guests get a readable generated name');
-    assert.equal(body.player.email, null);
+    assert.equal('email' in body.player, false, 'public player payloads never expose email');
     assert.equal(body.player.rating, 1000);
   } finally {
     await api.close();
@@ -280,6 +280,7 @@ test('the leaderboard is readable without signing in, and ranks guests alongside
       assert.equal(board.status, 200, 'no token required');
       assert.equal(board.body.entries.length, 2);
       assert.equal(board.body.entries[0].displayName, 'Accounty');
+      assert.equal('email' in board.body.entries[0], false, 'login identifiers stay private');
       assert.equal(board.body.entries[0].rank, 1);
       assert.equal(board.body.entries[1].rank, 2);
       assert.equal(board.body.me, null, 'no token, so no personal row');
@@ -403,5 +404,61 @@ test('an unknown route returns a JSON 404, not an HTML error page', async () => 
     assert.equal(body.error, 'not found');
   } finally {
     await api.close();
+  }
+});
+
+test('guest creation is rate limited before another player row is allocated', async () => {
+  const store = new MemoryStore();
+  await store.init();
+  const auth = createAuth({ secret: 'test-secret', logger: { warn() {} } });
+  const app = createApp({
+    store,
+    auth,
+    logger: { error() {} },
+    authLimits: { guest: { limit: 2, windowMs: 60_000 } },
+  });
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    assert.equal((await fetch(`${base}/api/auth/guest`, { method: 'POST' })).status, 201);
+    assert.equal((await fetch(`${base}/api/auth/guest`, { method: 'POST' })).status, 201);
+    const limited = await fetch(`${base}/api/auth/guest`, { method: 'POST' });
+    assert.equal(limited.status, 429);
+    assert.ok(Number(limited.headers.get('retry-after')) >= 1);
+    assert.equal(store.players.size, 2, 'limited calls do not allocate guest rows');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await store.close();
+  }
+});
+
+test('direct mode ignores spoofed forwarding headers when rate limiting', async () => {
+  const store = new MemoryStore();
+  const auth = createAuth({ secret: 'test-secret', logger: { warn() {} } });
+  const app = createApp({
+    store,
+    auth,
+    logger: { error() {} },
+    trustProxy: false,
+    authLimits: { guest: { limit: 1, windowMs: 60_000 } },
+  });
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const first = await fetch(`${base}/api/auth/guest`, {
+      method: 'POST', headers: { 'x-forwarded-for': '198.51.100.1' },
+    });
+    const second = await fetch(`${base}/api/auth/guest`, {
+      method: 'POST', headers: { 'x-forwarded-for': '198.51.100.2' },
+    });
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 429, 'spoofing X-Forwarded-For does not bypass direct mode');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await store.close();
   }
 });

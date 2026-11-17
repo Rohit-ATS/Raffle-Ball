@@ -19,15 +19,41 @@ import {
   verifyPassword,
 } from './auth.js';
 
-export function createApp({ store, auth = createAuth(), logger = console }) {
+export function createApp({
+  store,
+  auth = createAuth(),
+  logger = console,
+  now = () => Date.now(),
+  authLimits = {},
+  trustProxy = process.env.TRUST_PROXY === '1',
+}) {
   const app = express();
 
   app.disable('x-powered-by');
+  // Render is the supported proxy deployment. Direct/local servers must not trust a
+  // client-supplied X-Forwarded-For because it would create a fresh limiter bucket.
+  if (trustProxy) app.set('trust proxy', 1);
   app.use(express.json({ limit: '32kb' }));
 
   // The game client is not a browser page and sends no cookies, so a permissive origin is
   // not a credential-leak risk here; it also keeps a web-based leaderboard viewer possible.
   app.use(cors({ origin: true, credentials: false }));
+
+  const guestLimit = createFixedWindowLimiter({
+    limit: authLimits.guest?.limit ?? 30,
+    windowMs: authLimits.guest?.windowMs ?? 60_000,
+    now,
+  });
+  const registerLimit = createFixedWindowLimiter({
+    limit: authLimits.register?.limit ?? 10,
+    windowMs: authLimits.register?.windowMs ?? 15 * 60_000,
+    now,
+  });
+  const loginLimit = createFixedWindowLimiter({
+    limit: authLimits.login?.limit ?? 20,
+    windowMs: authLimits.login?.windowMs ?? 15 * 60_000,
+    now,
+  });
 
   /** Pulls the bearer token and resolves it to a player, or null. */
   async function currentPlayer(req) {
@@ -73,7 +99,7 @@ export function createApp({ store, auth = createAuth(), logger = console }) {
    * One pinch to play. No email, no password, no confirmation step - and the resulting
    * account is a real row that can be upgraded later without losing its record.
    */
-  app.post('/api/auth/guest', async (req, res, next) => {
+  app.post('/api/auth/guest', guestLimit, async (req, res, next) => {
     try {
       const fallback = randomGuestName();
       const displayName = sanitizeDisplayName(req.body?.displayName, fallback);
@@ -84,7 +110,7 @@ export function createApp({ store, auth = createAuth(), logger = console }) {
     }
   });
 
-  app.post('/api/auth/register', async (req, res, next) => {
+  app.post('/api/auth/register', registerLimit, async (req, res, next) => {
     try {
       const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
       const password = req.body?.password;
@@ -125,7 +151,7 @@ export function createApp({ store, auth = createAuth(), logger = console }) {
     }
   });
 
-  app.post('/api/auth/login', async (req, res, next) => {
+  app.post('/api/auth/login', loginLimit, async (req, res, next) => {
     try {
       const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
       const password = req.body?.password;
@@ -219,4 +245,39 @@ function clampInt(value, min, max, fallback) {
   const n = Number.parseInt(value, 10);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/** Small dependency-free limiter for the hackathon service's public auth endpoints. */
+export function createFixedWindowLimiter({ limit, windowMs, now = () => Date.now() }) {
+  const clients = new Map();
+  let requests = 0;
+
+  return (req, res, next) => {
+    const time = now();
+    const key = req.ip || req.socket?.remoteAddress || 'unknown';
+    let state = clients.get(key);
+
+    if (!state || time >= state.resetAt) {
+      state = { count: 0, resetAt: time + windowMs };
+      clients.set(key, state);
+    }
+
+    state.count += 1;
+    requests += 1;
+
+    // Amortized cleanup keeps spoofed/rotating addresses from growing the process forever.
+    if (requests % 256 === 0) {
+      for (const [client, value] of clients) {
+        if (time >= value.resetAt) clients.delete(client);
+      }
+    }
+
+    if (state.count > limit) {
+      const retryAfter = Math.max(1, Math.ceil((state.resetAt - time) / 1000));
+      res.set('Retry-After', String(retryAfter));
+      return res.status(429).json({ error: 'too many requests; try again later' });
+    }
+
+    return next();
+  };
 }

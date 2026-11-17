@@ -187,9 +187,10 @@ feeling like a room.
 
 **Your own throw is never networked while you make it.** Online, you throw against local
 physics with zero latency and report the result; the opponent replays your launch and then
-adopts the authoritative positions. The server scores the rink, so the leaderboard cannot be
-faked even though stone positions are client-reported. The full reasoning, and its limits, is
-in [server/README.md](server/README.md).
+adopts the reported positions. The server owns turn order and scoring, but client-reported
+physics cannot be independently verified, so these fast hackathon matches are retained in match
+history without changing wins or Elo. The full reasoning is in
+[server/README.md](server/README.md).
 
 ---
 

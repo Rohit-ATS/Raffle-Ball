@@ -12,7 +12,7 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
-const TOKEN_TTL = '60d'; // headsets are shared and sign-in is friction; long-lived tokens
+const TOKEN_TTL = process.env.JWT_TTL || '24h';
 
 /** Cost 10: around 60 ms on Render's smallest instance, which is the right trade here. */
 const BCRYPT_ROUNDS = 10;

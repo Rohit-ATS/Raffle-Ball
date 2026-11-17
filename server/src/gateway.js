@@ -30,6 +30,7 @@ export function createGateway({
   auth = createAuth(),
   logger = console,
   registry = new RoomRegistry(),
+  rankClientAuthoritativeMatches = false,
 }) {
   const wss = new WebSocketServer({ server, path: '/ws', maxPayload: MAX_MESSAGE_BYTES });
 
@@ -292,6 +293,9 @@ export function createGateway({
           loserPoints: room.totalPoints[loserSeat],
           rounds: room.round,
           endedReason: room.endedReason ?? 'completed',
+          // Physics is simulated by the throwing client. Keep the match playable and retain
+          // its history, but do not let an unverifiable snapshot change competitive ratings.
+          rated: rankClientAuthoritativeMatches,
         });
       } catch (err) {
         // A failed write must not stop the players being told who won.

@@ -1,8 +1,8 @@
 /**
  * Full multiplayer, over real sockets.
  *
- * Two clients connect, authenticate, find each other, play a complete match, and the result
- * lands on the leaderboard. This is the test that proves the thing people will actually do
+ * Two clients connect, authenticate, find each other, and play a complete match. Client-
+ * simulated matches stay unranked but remain in match history. This proves the thing people do
  * works, and it is the one worth keeping slow and realistic rather than mocking: every bug
  * found here so far has been in the seams - a message sent to the wrong player, a turn
  * advanced twice, a match recorded before the scores were applied.
@@ -466,7 +466,7 @@ test('an absurd launch is clamped rather than relayed as-is', async () => {
   }
 });
 
-test('a complete match is played, scored, and recorded on the leaderboard', async () => {
+test('a complete client-authoritative match is played and retained without changing Elo', async () => {
   const server = await startServer();
   try {
     const hostAuth = await guest(server, 'Winner');
@@ -502,15 +502,14 @@ test('a complete match is played, scored, and recorded on the leaderboard', asyn
     assert.equal(friendOver.youWon, false);
     assert.equal(hostOver.winnerSeat, 0);
     assert.equal(hostOver.reason, 'completed');
-    assert.equal(hostOver.player.wins, 1, 'the win is recorded on the player');
-    assert.equal(friendOver.player.losses, 1);
-    assert.ok(hostOver.player.rating > 1000, 'the winner gains rating');
-    assert.ok(friendOver.player.rating < 1000, 'the loser loses rating');
-    assert.equal(hostOver.rank, 1);
+    assert.equal(hostOver.player.wins, 0, 'unverified client physics cannot grant wins');
+    assert.equal(friendOver.player.losses, 0);
+    assert.equal(hostOver.player.rating, 1000, 'unverified results do not change Elo');
+    assert.equal(friendOver.player.rating, 1000);
+    assert.equal(hostOver.rank, null);
 
     const board = await (await fetch(`${server.httpBase}/api/leaderboard`)).json();
-    assert.equal(board.entries.length, 2);
-    assert.equal(board.entries[0].displayName, 'Winner');
+    assert.equal(board.entries.length, 0, 'unranked matches do not populate the leaderboard');
 
     const matches = await (await fetch(`${server.httpBase}/api/matches`)).json();
     assert.equal(matches.matches.length, 1);

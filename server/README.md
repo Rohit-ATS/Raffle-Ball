@@ -120,10 +120,12 @@ the one thing that must never feel networked. They then report where every stone
 The opponent replays the launch for the look of it and adopts the reported positions as truth.
 
 The honest consequence: **the thrower is trusted for stone positions.** A modified client could
-lie about where its stones stopped. What it cannot do is award itself points — the *server*
-scores the rink from those positions ([`scoring.js`](src/scoring.js)) and owns the turn order,
-the round count and the match result. That blocks the attack that actually gets used (posting a
-fake score to the leaderboard) without the cost of a fully authoritative simulation.
+lie about where its stones stopped. The server still scores the rink from those positions
+([`scoring.js`](src/scoring.js)) and owns turn order, round count and the displayed match result.
+Because that is not equivalent to authoritative physics, these matches are **unranked by
+default**: they remain visible in recent match history but do not change wins, losses or Elo.
+`createGateway` has an explicit `rankClientAuthoritativeMatches` switch for isolated demos, but
+production must leave it disabled until the server has a trustworthy physics/result source.
 
 `scoring.js` is a deliberate duplicate of the client's `ScoreKeeper.cs`. The two test suites are
 kept parallel on purpose — including the one-millimetre-lead case — so a change to the rule on

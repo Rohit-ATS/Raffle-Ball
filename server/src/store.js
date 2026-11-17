@@ -55,7 +55,6 @@ function publicPlayer(row) {
     id: row.id,
     kind: row.kind,
     displayName: row.display_name,
-    email: row.email ?? null,
     rating: row.rating,
     wins: row.wins,
     losses: row.losses,
@@ -145,7 +144,9 @@ class MemoryStore {
     return publicPlayer(row);
   }
 
-  async recordMatch({ roomCode, winnerId, loserId, winnerPoints, loserPoints, rounds, endedReason }) {
+  async recordMatch({
+    roomCode, winnerId, loserId, winnerPoints, loserPoints, rounds, endedReason, rated = true,
+  }) {
     const match = {
       id: randomUUID(),
       room_code: roomCode ?? null,
@@ -162,14 +163,14 @@ class MemoryStore {
     const winner = this.players.get(winnerId);
     const loser = this.players.get(loserId);
 
-    if (winner) {
+    if (rated && winner) {
       winner.wins += 1;
       winner.matches += 1;
       winner.points_for += winnerPoints;
       winner.points_against += loserPoints;
       winner.best_round = Math.max(winner.best_round, winnerPoints);
     }
-    if (loser) {
+    if (rated && loser) {
       loser.losses += 1;
       loser.matches += 1;
       loser.points_for += loserPoints;
@@ -177,7 +178,7 @@ class MemoryStore {
       loser.best_round = Math.max(loser.best_round, loserPoints);
     }
 
-    if (winner && loser) {
+    if (rated && winner && loser) {
       const { winnerRating, loserRating } = elo(winner.rating, loser.rating);
       winner.rating = winnerRating;
       loser.rating = loserRating;
@@ -306,7 +307,9 @@ class PostgresStore {
     return publicPlayer(rows[0]);
   }
 
-  async recordMatch({ roomCode, winnerId, loserId, winnerPoints, loserPoints, rounds, endedReason }) {
+  async recordMatch({
+    roomCode, winnerId, loserId, winnerPoints, loserPoints, rounds, endedReason, rated = true,
+  }) {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -325,7 +328,9 @@ class PostgresStore {
         throw Object.assign(new Error('unknown player in match'), { code: 'UNKNOWN_PLAYER' });
       }
 
-      const { winnerRating, loserRating } = elo(winnerBefore.rating, loserBefore.rating);
+      const { winnerRating, loserRating } = rated
+        ? elo(winnerBefore.rating, loserBefore.rating)
+        : { winnerRating: winnerBefore.rating, loserRating: loserBefore.rating };
       const id = randomUUID();
 
       await client.query(
@@ -338,26 +343,26 @@ class PostgresStore {
 
       const { rows: updatedWinner } = await client.query(
         `UPDATE players
-            SET wins = wins + 1,
-                matches = matches + 1,
+            SET wins = wins + $5,
+                matches = matches + $5,
                 points_for = points_for + $2,
                 points_against = points_against + $3,
                 best_round = GREATEST(best_round, $2),
                 rating = $4
           WHERE id = $1 RETURNING *`,
-        [winnerId, winnerPoints, loserPoints, winnerRating],
+        [winnerId, rated ? winnerPoints : 0, rated ? loserPoints : 0, winnerRating, rated ? 1 : 0],
       );
 
       const { rows: updatedLoser } = await client.query(
         `UPDATE players
-            SET losses = losses + 1,
-                matches = matches + 1,
+            SET losses = losses + $5,
+                matches = matches + $5,
                 points_for = points_for + $2,
                 points_against = points_against + $3,
                 best_round = GREATEST(best_round, $2),
                 rating = $4
           WHERE id = $1 RETURNING *`,
-        [loserId, loserPoints, winnerPoints, loserRating],
+        [loserId, rated ? loserPoints : 0, rated ? winnerPoints : 0, loserRating, rated ? 1 : 0],
       );
 
       await client.query('COMMIT');
@@ -476,7 +481,29 @@ export function elo(winnerRating, loserRating, k = 28) {
  * Builds the store. Falls back to memory when no DATABASE_URL is configured, which is what
  * makes `npm test` and a bare `npm start` work on a clean machine.
  */
-export async function createStore({ databaseUrl = process.env.DATABASE_URL, logger = console } = {}) {
+export function postgresSslOptions({
+  databaseUrl,
+  mode = process.env.DATABASE_SSL_MODE,
+  ca = process.env.DATABASE_CA,
+} = {}) {
+  const parsed = new URL(databaseUrl);
+  const loopback = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+  const selected = mode || (loopback ? 'disable' : 'verify-full');
+
+  if (selected === 'disable') return false;
+  if (selected !== 'verify-full') {
+    throw new Error('DATABASE_SSL_MODE must be either disable or verify-full');
+  }
+
+  return { rejectUnauthorized: true, ...(ca ? { ca } : {}) };
+}
+
+export async function createStore({
+  databaseUrl = process.env.DATABASE_URL,
+  databaseSslMode = process.env.DATABASE_SSL_MODE,
+  databaseCa = process.env.DATABASE_CA,
+  logger = console,
+} = {}) {
   if (!databaseUrl) {
     logger.warn?.('[store] no DATABASE_URL set; using the in-memory store (data is not durable)');
     const store = new MemoryStore();
@@ -487,9 +514,7 @@ export async function createStore({ databaseUrl = process.env.DATABASE_URL, logg
   const { default: pg } = await import('pg');
   const pool = new pg.Pool({
     connectionString: databaseUrl,
-    // Render's managed Postgres terminates TLS with its own chain, so verification is
-    // relaxed here; the connection is still encrypted.
-    ssl: databaseUrl.includes('localhost') ? false : { rejectUnauthorized: false },
+    ssl: postgresSslOptions({ databaseUrl, mode: databaseSslMode, ca: databaseCa }),
     max: 8,
     idleTimeoutMillis: 30_000,
   });

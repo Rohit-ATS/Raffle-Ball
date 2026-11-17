@@ -25,6 +25,11 @@ services:
       - key: NODE_ENV
         value: production
 
+      # Render terminates public HTTP one hop in front of the service. This opt-in lets the
+      # auth limiter use the real client address without weakening direct/local deployments.
+      - key: TRUST_PROXY
+        value: "1"
+
       # Generated once by Render and kept across deploys, so player sessions survive a
       # restart. Never commit a real value for this.
       - key: JWT_SECRET
@@ -34,6 +39,11 @@ services:
         fromDatabase:
           name: rift-rally-db
           property: connectionString
+
+      # Blueprint wiring supplies Render's same-region private URL. Internal connections do
+      # not need TLS; every other remote deployment defaults to verified TLS in store.js.
+      - key: DATABASE_SSL_MODE
+        value: disable
 
 databases:
   - name: rift-rally-db

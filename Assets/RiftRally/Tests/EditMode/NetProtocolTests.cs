@@ -17,6 +17,20 @@ namespace RiftRally.Tests
     public class NetProtocolTests
     {
         [Test]
+        public void StartingTheClientDeletesTokensLeftByOlderBuilds()
+        {
+            PlayerPrefs.SetString("riftrally.token", "legacy-bearer");
+            PlayerPrefs.Save();
+
+            var go = new GameObject("RiftNetClient_SecurityTest");
+            go.AddComponent<RiftNetClient>();
+
+            Assert.IsFalse(PlayerPrefs.HasKey("riftrally.token"),
+                "an in-place upgrade must remove the old long-lived credential");
+            Object.DestroyImmediate(go);
+        }
+
+        [Test]
         public void TheEnvelopeTypeIsReadableBeforeThePayloadIsKnown()
         {
             var envelope = RiftNetClient.Parse<NetEnvelope>("{\"type\":\"roundScored\",\"junk\":1}");

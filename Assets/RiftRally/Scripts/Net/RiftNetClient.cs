@@ -50,7 +50,7 @@ namespace RiftRally.Net
         public float ReconnectDelay = 1.5f;
 
         [Header("Session")]
-        [Tooltip("Stored player token. Written to PlayerPrefs so a player stays signed in.")]
+        [Tooltip("Current player token. Kept in memory so local preferences never contain a bearer credential.")]
         public string Token;
 
         public NetStatus Status { get; private set; } = NetStatus.Offline;
@@ -76,20 +76,23 @@ namespace RiftRally.Net
 
         private ClientWebSocket _socket;
         private CancellationTokenSource _cancellation;
+        private const string LegacyTokenKey = "riftrally.token";
         private readonly ConcurrentQueue<string> _inbound = new();
         private readonly ConcurrentQueue<string> _outbound = new();
         private float _nextReconnectAt;
         private float _currentDelay;
         private bool _wantConnection;
 
-        private const string TokenKey = "riftrally.token";
-
         private void Awake()
         {
             if (Instance != null && Instance != this) { Destroy(this); return; }
             Instance = this;
 
-            if (string.IsNullOrEmpty(Token)) Token = PlayerPrefs.GetString(TokenKey, string.Empty);
+            // Remove credentials written by older builds. New sessions are memory-only, but an
+            // in-place upgrade must not leave the previous 60-day bearer token on the device.
+            PlayerPrefs.DeleteKey(LegacyTokenKey);
+            PlayerPrefs.Save();
+
             _currentDelay = ReconnectDelay;
         }
 
@@ -123,8 +126,8 @@ namespace RiftRally.Net
         // ---------------------------------------------------------------- sign in
 
         /// <summary>
-        /// Gets a token: reuses a stored one, otherwise creates a guest. This is the default
-        /// path into the game - one call, no typing, and the resulting account is real.
+        /// Gets a token: reuses the current in-memory session, otherwise creates a guest. This
+        /// is the default path into the game - one call, no typing, and no credential at rest.
         /// </summary>
         public IEnumerator SignInAsGuest(string displayName = null, Action<bool> done = null)
         {
@@ -191,7 +194,7 @@ namespace RiftRally.Net
             Disconnect();
             Token = string.Empty;
             Me = null;
-            PlayerPrefs.DeleteKey(TokenKey);
+            PlayerPrefs.DeleteKey(LegacyTokenKey);
             PlayerPrefs.Save();
         }
 
@@ -199,8 +202,6 @@ namespace RiftRally.Net
         {
             Token = response.token;
             Me = response.player;
-            PlayerPrefs.SetString(TokenKey, Token);
-            PlayerPrefs.Save();
             Authenticated?.Invoke(Me);
         }
 
