@@ -1,0 +1,17 @@
+{
+    "name": "RiftRally",
+    "rootNamespace": "RiftRally",
+    "references": [
+        "Unity.XR.Hands",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

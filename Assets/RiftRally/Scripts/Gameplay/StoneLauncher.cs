@@ -125,6 +125,10 @@ namespace RiftRally.Gameplay
             GameObject go = Instantiate(StonePrefab, _anchor, Quaternion.identity);
             go.name = $"Stone_{player}_{Time.frameCount}";
 
+            // The source may be an inactive template parked off-rink, so copies are woken up
+            // explicitly rather than relying on the prefab's own active state.
+            if (!go.activeSelf) go.SetActive(true);
+
             ActiveStone = go.GetComponent<Stone>();
             if (ActiveStone == null)
             {

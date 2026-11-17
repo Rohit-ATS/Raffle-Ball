@@ -8,7 +8,13 @@ namespace RiftRally.Core
     public enum GameMode
     {
         SoloVsAi,
-        HotSeatTwoPlayer
+        HotSeatTwoPlayer,
+
+        /// <summary>
+        /// Both sides played by the AI. Drives the attract-mode demo match, and lets the
+        /// whole match loop be exercised by an automated test with no hands attached.
+        /// </summary>
+        AiVsAi
     }
 
     public enum MatchState
@@ -189,7 +195,7 @@ namespace RiftRally.Core
             int stoneNumber = StonesThrownThisRound / 2 + 1;
             TurnStarted?.Invoke(player, stoneNumber);
 
-            bool aiTurn = Mode == GameMode.SoloVsAi && player == PlayerSide.Two && Ai != null;
+            bool aiTurn = IsAiControlled(player);
 
             if (aiTurn)
             {
@@ -228,6 +234,14 @@ namespace RiftRally.Core
             }
 
             yield return new WaitForSeconds(GameConfig.TurnHandoffTime * 0.5f);
+        }
+
+        /// <summary>True when the AI, rather than a person, throws for this side.</summary>
+        public bool IsAiControlled(PlayerSide player)
+        {
+            if (Ai == null) return false;
+            if (Mode == GameMode.AiVsAi) return true;
+            return Mode == GameMode.SoloVsAi && player == PlayerSide.Two;
         }
 
         private void OnStoneThrown(Stone stone, float speed)

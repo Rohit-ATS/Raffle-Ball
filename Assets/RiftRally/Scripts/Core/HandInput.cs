@@ -164,13 +164,13 @@ namespace RiftRally.Core
             var cam = Camera.main;
             if (cam == null) return;
 
-            Ray ray = cam.ScreenPointToRay(Input.mousePosition);
+            Ray ray = cam.ScreenPointToRay(PointerInput.Position);
             var plane = new Plane(Vector3.up, new Vector3(0f, DesktopPlaneHeight, 0f));
 
             Vector3 point = cam.transform.position + cam.transform.forward * 0.6f;
             if (plane.Raycast(ray, out float enter)) point = ray.GetPoint(enter);
 
-            bool held = Input.GetMouseButton(0);
+            bool held = PointerInput.PrimaryHeld;
             int i = (int)HandSide.Right;
             _pinchLatched[i] = held;
 
