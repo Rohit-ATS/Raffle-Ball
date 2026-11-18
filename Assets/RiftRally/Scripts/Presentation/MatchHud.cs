@@ -59,24 +59,32 @@ namespace RiftRally.Presentation
             root.localPosition = Vector3.zero;
             root.localRotation = Quaternion.identity;
 
-            // Scoreboard hangs just beyond the far end, angled back at the player.
+            // Scoreboard hangs just beyond the far end, angled back at the player. It gets a
+            // plate now: beyond the far end is exactly where the landscape is, and a sky, a
+            // treeline or a lit ridge behind the numbers was swallowing them.
             _score = TextPanel.Create(root, "Scoreboard",
-                new Vector3(0f, 0.30f, halfL + 0.06f), 0.045f);
-            _score.SetColor(GameConfig.NeutralColor);
+                new Vector3(0f, 0.30f, halfL + 0.06f), 0.045f,
+                TextAnchor.MiddleCenter, FontStyle.Bold);
+            _score.WithPlate(Theme.Panel, 0.03f, 0.016f);
+            _score.SetColor(Theme.Text);
 
             // Banner floats over the house, where the player is already looking.
             _banner = TextPanel.Create(root, "Banner",
-                new Vector3(0f, 0.20f, halfL - GameConfig.TargetFromFarEnd), 0.055f);
+                new Vector3(0f, 0.20f, halfL - GameConfig.TargetFromFarEnd), 0.055f,
+                TextAnchor.MiddleCenter, FontStyle.Bold);
             _banner.HideInstant();
 
             _sub = TextPanel.Create(root, "BannerSub",
                 new Vector3(0f, 0.145f, halfL - GameConfig.TargetFromFarEnd), 0.028f);
             _sub.HideInstant();
 
-            // Hint sits low near the launch line, out of the throwing line of sight.
+            // The hint used to sit low at the near end of the rink, which is where the pull
+            // back happens - directly under the hand that is about to throw. It has moved to
+            // under the scoreboard, past the far end, where it is out of the throwing
+            // corridor entirely and still in view while the player is sighting down the ice.
             _hint = TextPanel.Create(root, "Hint",
-                new Vector3(0f, 0.09f, -halfL + 0.02f), 0.022f);
-            _hint.SetColor(GameConfig.NeutralColor);
+                new Vector3(0f, 0.245f, halfL + 0.06f), 0.019f);
+            _hint.SetColor(Theme.TextDim);
         }
 
         private void Subscribe()
@@ -110,7 +118,7 @@ namespace RiftRally.Presentation
             switch (state)
             {
                 case MatchState.Attract:
-                    ShowBanner("RIFT RALLY", "PINCH TO BEGIN", GameConfig.TargetColor, 999f);
+                    ShowBanner("RIFT RALLY", "PINCH TO BEGIN", Theme.Primary, 999f);
                     ShowHint("HOLD YOUR HANDS OVER THE TABLE");
                     break;
 
@@ -131,7 +139,7 @@ namespace RiftRally.Presentation
                 ? modifier.Description.ToUpperInvariant()
                 : "CLEAN RINK - GET THE FEEL OF THE ICE";
 
-            Color c = modifier != null ? GameConfig.TargetColor : GameConfig.NeutralColor;
+            Color c = modifier != null ? Theme.Primary : Theme.TextDim;
             ShowBanner(title, sub, c, GameConfig.ModifierRevealTime);
             RefreshScore();
         }
@@ -153,7 +161,7 @@ namespace RiftRally.Presentation
             if (result.IsBlank)
             {
                 ShowBanner("BLANK ROUND", "NO STONE IN THE HOUSE",
-                           GameConfig.NeutralColor, GameConfig.RoundScoreRevealTime);
+                           Theme.TextDim, GameConfig.RoundScoreRevealTime);
             }
             else
             {
@@ -200,7 +208,7 @@ namespace RiftRally.Presentation
 
         private void ShowHint(string text)
         {
-            if (_hint != null) _hint.Show(text, GameConfig.NeutralColor);
+            if (_hint != null) _hint.Show(text, Theme.TextDim);
         }
 
         private void Update()

@@ -33,6 +33,70 @@ that only changes how the rink looks would make rounds feel varied while playing
 
 ---
 
+## The world around the table
+
+The rink used to float in the default blue void, which made a game about a physical table on
+a physical surface feel like a tech demo. It now stands in a real place, and in a different
+one every game.
+
+Eight landscapes are in rotation:
+
+| | |
+|---|---|
+| **Alpine Dawn** | Snow line, dark spruce, a low peach sun and falling snow. |
+| **Amber Woods** | Late autumn broadleaf, amber light, leaves coming down. |
+| **Red Mesa** | High desert, red rock, saguaro, vultures turning overhead. |
+| **Coral Lagoon** | White sand, palms, turquoise shallows, gulls working the water. |
+| **Highland Moor** | Overcast, heather, standing deadwood, a skein of birds crossing. |
+| **Boreal Dusk** | Night pines under an aurora, snow in the air, ravens. |
+| **Savanna Dusk** | Gold grass, flat-crowned acacia, a huge sun on the horizon. |
+| **Blossom Valley** | Spring hills, cherry blossom, petals drifting, water in the low ground. |
+
+**The rotation rolls rather than shuffles.** Picking at random out of eight repeats the same
+biome back to back about one game in eight, which reads to a player as the feature being
+broken — they were promised somewhere new and got the place they just left. Walking the list
+in order guarantees eight different environments before any of them returns, and the position
+is saved, so coming back tomorrow continues the tour. It can be pinned or stepped by hand from
+the options dock or the lobby.
+
+**Everything is generated, including the birds.** Terrain is a noise heightmap flattened to
+level ground under the table; trees are built per biome from prisms, cones and faceted blobs;
+the sky is an inside-out dome sampling a baked colour ramp, which is how a gradient sky and a
+grass-to-rock-to-snow hillside each cost one material on stock URP shaders. The flocks are
+three triangles a bird, and almost all of the life in them is in the flight path — birds bank
+into their turns, lose height on the outside of a curve, and beat their wings in bursts with
+glides between, because a bird on a constant-speed circle reads as a fairground ride. Still no
+binary assets: the repository carries no textures, meshes or audio.
+
+**The interface recolours with the landscape.** Each biome carries its own UI palette, chosen
+against its own sky rather than alongside it — the bright biomes get darker, more opaque
+panels and the dusk biomes get lighter text. Labels are set in the best font the device
+actually has (Roboto on a Quest, a Segoe or Bahnschrift weight on Windows, requested by name
+at runtime) with a dark offset copy behind every glyph, because the one background a label can
+no longer count on is a dark one.
+
+### The HUD you can reach
+
+The table signage announces things well but could never be *consulted*: the scoreboard was two
+metres away at the far end, and the settings lived in a lobby that vanished the moment a match
+began. There is now a near-field dock as well, and it works before and during a game.
+
+- **Off to the lower left, not straight ahead.** The corridor from the player to the house is
+  where the whole game happens — stone, pull, aim line — so anything in it is in the way.
+  Forty centimetres to the left clears the table entirely and is still an easy reach.
+- **Comfort-tethered, not head-locked.** It keeps station relative to where the player is
+  facing, but lazily, with a yaw dead zone and a damped follow, so small head movements leave
+  it alone. A panel welded to the head is the fastest way to make someone feel sick in VR.
+- **It gets out of the way by itself.** Opacity follows the gaze — full when glanced at, faint
+  when the eyes are up at the house — and drops to almost nothing the instant a stone is in
+  hand. That is the real complaint about VR HUDs: not that they are ugly, but that they are
+  permanently in front of something you are trying to look at.
+- **Options in a pinch.** Landscape (with back and forward keys), whether the world changes
+  each game, detail level, sound, HUD dimming, and starting or ending a match — all reachable
+  mid-round without leaving the game.
+
+---
+
 ## Download size, and what "4K" means here
 
 The Quest build is **46 MB**. There is nothing to compress: the rink, the stones, the rings,
@@ -75,6 +139,9 @@ In a Windows build, press **Enter** to start a solo match. Use **Arrow keys** (o
 move the right hand, and hold **Ctrl** to pinch, grab, pull and release. The original mouse
 controls remain available: hold **Space** while moving the mouse to drive the right hand, and
 use left mouse to pinch.
+
+**Tab** opens and closes the options dock, and **N** jumps straight to the next landscape —
+useful for looking through all eight without playing eight games.
 
 ### On a Quest
 
@@ -133,14 +200,19 @@ complete match between two real WebSocket clients.
 ```
 Assets/RiftRally/
   Scripts/
-    Core/         GameConfig, HandInput, OneEuroFilter, PointerInput,
-                  MatchManager, ScoreKeeper
+    Core/         GameConfig, Theme, HandInput, OneEuroFilter, PointerInput,
+                  DesktopInput, MatchManager, ScoreKeeper
     Gameplay/     Rink, Stone, StoneLauncher, AimPreview, AiOpponent
     Modifiers/    RinkModifier + Current, Bumpers, WarpGates, ModifierDirector
-    Presentation/ MatchHud, MainMenu, PinchButton, HandVisuals, StoneVfx,
-                  HouseGlow, SlowMotion, Easing, TextPanel, AudioDirector
+    Presentation/ MatchHud, HudDock, MainMenu, PinchButton, HandVisuals,
+                  StoneVfx, HouseGlow, SlowMotion, Easing, TextPanel,
+                  Typography, AudioDirector
+    Scenery/      Landscape + LandscapeCatalog, LandscapeRotation,
+                  LandscapeBuilder, LandscapeDirector, BirdFlock,
+                  SceneryArt, SceneryMotion
     Net/          RiftNetClient, NetMatchDriver, NetProtocol
-    Setup/        GameBootstrap, RinkBuilder, ProceduralArt, QualityTuner
+    Setup/        GameBootstrap, RinkBuilder, ProceduralArt, QualityTuner,
+                  DesktopVrSimulator
   Editor/         Scene generator, command-line build entry points
   Tests/          EditMode and PlayMode suites
 server/           Node multiplayer service (see server/README.md)

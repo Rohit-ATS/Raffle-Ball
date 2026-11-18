@@ -36,6 +36,9 @@ namespace RiftRally.Setup
         [Tooltip("Starting quality preset.")]
         public Preset Quality = Preset.Balanced;
 
+        [Tooltip("Landscape owner, thinned out along with the render settings.")]
+        public Scenery.LandscapeDirector Scenery;
+
         [Tooltip("Target refresh rate. VR must hold this; 90 Hz is the Quest default.")]
         public int TargetFrameRate = 90;
 
@@ -103,6 +106,12 @@ namespace RiftRally.Setup
 
             // Hands-only game: no need to keep a controller-shaped input path warm.
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
+
+            // The landscape thins out with the render settings. Supersampling is the dial
+            // that matters for the rink, but on a device that is already missing frames the
+            // hundred and fifty trees on the hillside are the cheapest thing to give up, and
+            // a player looking at the table will not notice the far treeline getting sparser.
+            if (Scenery != null) Scenery.ApplyQuality(preset);
         }
 
         private void Update()

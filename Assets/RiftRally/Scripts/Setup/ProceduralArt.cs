@@ -14,6 +14,7 @@ namespace RiftRally.Setup
     public static class ProceduralArt
     {
         private static Material _litTemplate;
+        private static Material _unlitTemplate;
 
         /// <summary>
         /// A material matching the project's render pipeline.
@@ -58,6 +59,116 @@ namespace RiftRally.Setup
                 Object.Destroy(probe);
                 return _litTemplate;
             }
+        }
+
+        /// <summary>
+        /// The unlit counterpart of <see cref="LitTemplate"/>, found by the same name-first
+        /// lookup and for the same reason.
+        ///
+        /// The scenery needs it: a sky, a sun disc and a distant cloud bank must not react to
+        /// the scene light at all, or the horizon darkens whenever the sun angle changes and
+        /// the sky stops reading as a sky. Unlit is also the cheapest surface a mobile GPU
+        /// can draw, which is what makes a sixty-metre world affordable at 90 Hz.
+        /// </summary>
+        private static Material UnlitTemplate
+        {
+            get
+            {
+                if (_unlitTemplate != null) return _unlitTemplate;
+
+                Shader shader = Shader.Find("Universal Render Pipeline/Unlit");
+                if (shader != null)
+                {
+                    _unlitTemplate = new Material(shader) { name = "RR_UnlitTemplate" };
+                    return _unlitTemplate;
+                }
+
+                // No unlit shader in the build: fall back to the lit one rather than to
+                // nothing. Slightly wrong shading beats an invisible sky.
+                _unlitTemplate = LitTemplate != null ? new Material(LitTemplate) : null;
+                return _unlitTemplate;
+            }
+        }
+
+        /// <summary>
+        /// An unlit flat-colour material, optionally alpha blended. Used for everything in
+        /// the scenery that is meant to look like light rather than like a surface.
+        /// </summary>
+        public static Material MakeUnlitMaterial(Color color, bool transparent = false)
+        {
+            var mat = new Material(UnlitTemplate) { name = $"RR_Unlit_{color}" };
+
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", color);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
+
+            if (transparent) MakeAlphaBlended(mat);
+            return mat;
+        }
+
+        /// <summary>
+        /// An unlit textured material. <paramref name="cullFront"/> flips which side is
+        /// drawn, which is how a sky dome is viewed from the inside without needing an
+        /// inside-out mesh, and <paramref name="renderQueue"/> pushes the sky behind
+        /// everything else.
+        /// </summary>
+        public static Material MakeTexturedUnlit(Texture texture, bool cullFront = false,
+                                                  bool transparent = false,
+                                                  int renderQueue = -1)
+        {
+            var mat = new Material(UnlitTemplate) { name = "RR_UnlitTex" };
+
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", Color.white);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", Color.white);
+            if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", texture);
+            if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", texture);
+
+            if (transparent) MakeAlphaBlended(mat);
+            // 0 = both sides, 1 = front faces culled (so the inside is what you see),
+            // 2 = back faces culled, which is the usual default.
+            if (mat.HasProperty("_Cull")) mat.SetFloat("_Cull", cullFront ? 1f : 2f);
+            if (cullFront) mat.SetShaderPassEnabled("ShadowCaster", false);
+            if (renderQueue >= 0) mat.renderQueue = renderQueue;
+
+            return mat;
+        }
+
+        /// <summary>Switches an existing material to ordinary alpha blending.</summary>
+        public static void MakeAlphaBlended(Material material) => ConfigureBlend(material, false);
+
+        /// <summary>
+        /// Bakes a colour ramp into a 1D texture.
+        ///
+        /// This is the trick the whole landscape leans on. URP's Lit and Unlit shaders do not
+        /// read vertex colours, so a gradient sky or a terrain that shades from grass to rock
+        /// to snow would otherwise need either a custom shader - another thing that can be
+        /// stripped out of a build - or one material per band, which multiplies the draw
+        /// calls. A ramp texture sampled by a UV the mesh builder writes from height gives
+        /// both, with one material and no shader of our own.
+        /// </summary>
+        public static Texture2D MakeRamp(params Color[] stops)
+        {
+            const int width = 128;
+            var texture = new Texture2D(width, 1, TextureFormat.RGBA32, false)
+            {
+                name = "RR_Ramp",
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear
+            };
+
+            if (stops == null || stops.Length == 0) stops = new[] { Color.magenta };
+
+            var pixels = new Color[width];
+            for (int x = 0; x < width; x++)
+            {
+                float t = stops.Length == 1 ? 0f : x / (float)(width - 1) * (stops.Length - 1);
+                int i = Mathf.Clamp((int)t, 0, stops.Length - 2 < 0 ? 0 : stops.Length - 2);
+                float f = Mathf.Clamp01(t - i);
+                pixels[x] = stops.Length == 1 ? stops[0] : Color.Lerp(stops[i], stops[i + 1], f);
+            }
+
+            texture.SetPixels(pixels);
+            texture.Apply(false, false);
+            return texture;
         }
 
         /// <summary>

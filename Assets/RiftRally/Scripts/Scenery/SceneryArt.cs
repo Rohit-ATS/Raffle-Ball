@@ -1,0 +1,574 @@
+using UnityEngine;
+using RiftRally.Setup;
+
+namespace RiftRally.Scenery
+{
+    /// <summary>
+    /// Mesh builders for the world outside the table.
+    ///
+    /// The rink's own helpers in <see cref="ProceduralArt"/> deal in boxes, discs and rings
+    /// at centimetre scale. The landscape needs a different vocabulary - a sky you are inside
+    /// of, ground that rolls, cones for conifers - at tens of metres, and it has a constraint
+    /// the rink does not: it is drawn every frame behind everything else, at a distance where
+    /// nobody can see detail, so every mesh here is built to be as cheap as it can be while
+    /// still reading correctly in silhouette.
+    ///
+    /// The one piece of shared machinery worth knowing about is the ramp texture. URP's
+    /// stock shaders do not read vertex colours, so a gradient - sky, or ground shading from
+    /// grass through rock to snow - is produced by writing a UV from height in the mesh
+    /// builder and sampling a 1D ramp. That keeps the entire sky and the entire terrain to one
+    /// material each.
+    /// </summary>
+    public static class SceneryArt
+    {
+        /// <summary>
+        /// Fraction of the height range that sits below zero, giving the ground hollows for
+        /// water to collect in. Shared by the mesh builder and by the shading coordinate, so
+        /// the two cannot disagree about where the waterline is.
+        /// </summary>
+        public const float GroundBaseline = 0.25f;
+
+        /// <summary>
+        /// An inside-out dome. UV.x runs from the horizon (0) to the zenith (1), which is
+        /// what a sky ramp is sampled by; UV.y is unused and parked at the texture centre.
+        /// </summary>
+        public static Mesh BuildSkyDome(float radius, int segments = 32, int rings = 12)
+        {
+            segments = Mathf.Max(8, segments);
+            rings = Mathf.Max(3, rings);
+
+            // One extra ring below the horizon, so the dome closes visually even when the
+            // player's eye sits a little above the terrain and can see under its rim.
+            int ringCount = rings + 1;
+            var verts = new Vector3[(segments + 1) * (ringCount + 1)];
+            var uvs = new Vector2[verts.Length];
+            var tris = new int[segments * ringCount * 6];
+
+            for (int r = 0; r <= ringCount; r++)
+            {
+                // Latitude from a little below the horizon up to the pole.
+                float t = r / (float)ringCount;
+                float latitude = Mathf.Lerp(-0.12f, 1f, t) * Mathf.PI * 0.5f;
+                float y = Mathf.Sin(latitude);
+                float ring = Mathf.Cos(latitude);
+
+                // The ramp coordinate is clamped at the horizon so the skirt below it keeps
+                // the horizon colour instead of sampling off the end of the ramp.
+                float ramp = Mathf.Clamp01(y);
+
+                for (int s = 0; s <= segments; s++)
+                {
+                    float angle = s / (float)segments * Mathf.PI * 2f;
+                    int i = r * (segments + 1) + s;
+                    verts[i] = new Vector3(Mathf.Cos(angle) * ring * radius,
+                                           y * radius * 0.92f,
+                                           Mathf.Sin(angle) * ring * radius);
+                    uvs[i] = new Vector2(ramp, 0.5f);
+                }
+            }
+
+            int tri = 0;
+            for (int r = 0; r < ringCount; r++)
+            {
+                for (int s = 0; s < segments; s++)
+                {
+                    int a = r * (segments + 1) + s;
+                    int b = a + 1;
+                    int c = a + segments + 1;
+                    int d = c + 1;
+
+                    tris[tri++] = a; tris[tri++] = c; tris[tri++] = b;
+                    tris[tri++] = b; tris[tri++] = c; tris[tri++] = d;
+                }
+            }
+
+            var mesh = new Mesh { name = "RR_SkyDome" };
+            mesh.indexFormat = verts.Length > 65000
+                ? UnityEngine.Rendering.IndexFormat.UInt32
+                : UnityEngine.Rendering.IndexFormat.UInt16;
+            mesh.SetVertices(verts);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateNormals();
+            // A sky is never culled by its own bounds; keeping them generous stops the dome
+            // popping out of view when the player leans.
+            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * radius * 2.4f);
+            return mesh;
+        }
+
+        /// <summary>
+        /// Rolling ground.
+        ///
+        /// The grid is flat inside <paramref name="flatRadius"/> and rises outside it, so the
+        /// table always stands on level ground no matter how craggy the biome is. The blend is
+        /// smoothed rather than stepped, because a hard ring of hills around a flat disc looks
+        /// exactly like what it is.
+        ///
+        /// UV.x carries a shading coordinate built from height and slope, which the ground
+        /// ramp turns into grass, rock and snow. Writing it here rather than in a shader is
+        /// what keeps the whole landscape on stock URP.
+        /// </summary>
+        public static Mesh BuildTerrain(Landscape landscape, int seed, float extent = 62f,
+                                        int resolution = 56, float flatRadius = 3.6f,
+                                        float flatFalloff = 5.5f)
+        {
+            resolution = Mathf.Clamp(resolution, 8, 160);
+
+            int side = resolution + 1;
+            var verts = new Vector3[side * side];
+            var uvs = new Vector2[verts.Length];
+            var tris = new int[resolution * resolution * 6];
+
+            float step = extent * 2f / resolution;
+            var noise = new TerrainNoise(seed, landscape.HillRoughness);
+
+            for (int z = 0; z <= resolution; z++)
+            {
+                for (int x = 0; x <= resolution; x++)
+                {
+                    float wx = -extent + x * step;
+                    float wz = -extent + z * step;
+                    int i = z * side + x;
+
+                    float height = HeightAt(noise, landscape, wx, wz, flatRadius, flatFalloff);
+                    verts[i] = new Vector3(wx, height, wz);
+                }
+            }
+
+            // Shading coordinate per vertex, from normalised height plus a slope term taken
+            // from the neighbouring samples. Slope is what makes a cliff face read as rock
+            // while the plateau above it stays green.
+            for (int z = 0; z <= resolution; z++)
+            {
+                for (int x = 0; x <= resolution; x++)
+                {
+                    int i = z * side + x;
+                    int left = z * side + Mathf.Max(0, x - 1);
+                    int right = z * side + Mathf.Min(resolution, x + 1);
+                    int down = Mathf.Max(0, z - 1) * side + x;
+                    int up = Mathf.Min(resolution, z + 1) * side + x;
+
+                    float slope = (Mathf.Abs(verts[right].y - verts[left].y)
+                                   + Mathf.Abs(verts[up].y - verts[down].y)) / (step * 2f);
+
+                    float range = Mathf.Max(0.01f, landscape.HillHeight);
+                    float normalised = Mathf.Clamp01(
+                        Mathf.InverseLerp(-GroundBaseline * range,
+                                          (1f - GroundBaseline) * range, verts[i].y));
+                    float shade = Mathf.Clamp01(normalised * 0.78f + slope * 0.55f);
+                    uvs[i] = new Vector2(shade, 0.5f);
+                }
+            }
+
+            int tri = 0;
+            for (int z = 0; z < resolution; z++)
+            {
+                for (int x = 0; x < resolution; x++)
+                {
+                    int a = z * side + x;
+                    int b = a + 1;
+                    int c = a + side;
+                    int d = c + 1;
+
+                    tris[tri++] = a; tris[tri++] = c; tris[tri++] = b;
+                    tris[tri++] = b; tris[tri++] = c; tris[tri++] = d;
+                }
+            }
+
+            var mesh = new Mesh { name = "RR_Terrain" };
+            mesh.indexFormat = verts.Length > 65000
+                ? UnityEngine.Rendering.IndexFormat.UInt32
+                : UnityEngine.Rendering.IndexFormat.UInt16;
+            mesh.SetVertices(verts);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// The terrain height function, exposed so anything being planted on the ground can
+        /// ask where the ground is rather than guessing and floating.
+        /// </summary>
+        public static float HeightAt(TerrainNoise noise, Landscape landscape, float x, float z,
+                                     float flatRadius = 3.6f, float flatFalloff = 5.5f)
+        {
+            // The baseline is subtracted before scaling, so roughly the lowest quarter of the
+            // range comes out below zero. Without it every sample is positive, the ground has
+            // no hollows at all, and a water plane set below zero is buried everywhere - which
+            // is exactly how the lagoon looked at first: a biome with no lagoon in it.
+            float raw = (noise.Sample(x, z) - GroundBaseline) * landscape.HillHeight;
+
+            // Smooth the hills out to nothing near the table. SmoothStep rather than a
+            // linear ramp: a linear blend leaves a visible crease where the slope changes.
+            float distance = Mathf.Sqrt(x * x + z * z);
+            float blend = Mathf.SmoothStep(0f, 1f,
+                Mathf.Clamp01((distance - flatRadius) / Mathf.Max(0.01f, flatFalloff)));
+
+            return raw * blend;
+        }
+
+        /// <summary>
+        /// Layered value noise, in the shape the terrain wants.
+        ///
+        /// <see cref="Mathf.PerlinNoise"/> does the sampling - no reason to hand-roll a
+        /// gradient noise when the engine ships one - but it is deterministic and unseeded, so
+        /// the seed is folded in as an offset in the sample plane. Two octaves and a ridged
+        /// third give rolling ground with the occasional sharper crest, which is what reads as
+        /// natural at this distance without a third of a million triangles.
+        /// </summary>
+        public struct TerrainNoise
+        {
+            private readonly float _offsetX;
+            private readonly float _offsetZ;
+            private readonly float _roughness;
+
+            public TerrainNoise(int seed, float roughness)
+            {
+                var random = new System.Random(seed);
+                _offsetX = (float)random.NextDouble() * 1000f;
+                _offsetZ = (float)random.NextDouble() * 1000f;
+                _roughness = Mathf.Max(0.05f, roughness);
+            }
+
+            public float Sample(float x, float z)
+            {
+                float sx = x * 0.016f + _offsetX;
+                float sz = z * 0.016f + _offsetZ;
+
+                float broad = Mathf.PerlinNoise(sx, sz);
+                float medium = Mathf.PerlinNoise(sx * 2.7f, sz * 2.7f) * 0.45f;
+                float fine = Mathf.PerlinNoise(sx * 6.1f, sz * 6.1f) * 0.16f;
+
+                // The ridged octave is 1 - |2n-1|, which turns smooth humps into crests.
+                float ridgeNoise = Mathf.PerlinNoise(sx * 1.6f + 31.7f, sz * 1.6f + 11.3f);
+                float ridge = (1f - Mathf.Abs(ridgeNoise * 2f - 1f)) * 0.35f * _roughness;
+
+                float sum = (broad + medium + fine) / 1.61f;
+                return Mathf.Clamp01(sum * 0.82f + ridge);
+            }
+        }
+
+        /// <summary>A cone standing on its base, for conifers and rock spires.</summary>
+        public static Mesh BuildCone(float radius, float height, int segments = 10)
+        {
+            segments = Mathf.Max(3, segments);
+
+            // Flat shaded: each side is its own triangle with its own vertices, so the facets
+            // stay crisp instead of being smoothed into a lumpy sphere by shared normals.
+            var verts = new Vector3[segments * 3 + segments * 3];
+            var tris = new int[verts.Length];
+            var uvs = new Vector2[verts.Length];
+
+            int v = 0;
+            for (int s = 0; s < segments; s++)
+            {
+                float a0 = s / (float)segments * Mathf.PI * 2f;
+                float a1 = (s + 1) / (float)segments * Mathf.PI * 2f;
+
+                Vector3 p0 = new Vector3(Mathf.Cos(a0) * radius, 0f, Mathf.Sin(a0) * radius);
+                Vector3 p1 = new Vector3(Mathf.Cos(a1) * radius, 0f, Mathf.Sin(a1) * radius);
+                Vector3 tip = new Vector3(0f, height, 0f);
+
+                verts[v + 0] = p0; verts[v + 1] = tip; verts[v + 2] = p1;
+                v += 3;
+
+                // Base cap, wound the other way so it is visible from underneath.
+                verts[v + 0] = p1; verts[v + 1] = Vector3.zero; verts[v + 2] = p0;
+                v += 3;
+            }
+
+            for (int i = 0; i < tris.Length; i++)
+            {
+                tris[i] = i;
+                uvs[i] = new Vector2(0.5f, 0.5f);
+            }
+
+            var mesh = new Mesh { name = "RR_Cone" };
+            mesh.SetVertices(verts);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// A faceted blob: an octahedron pushed out onto a sphere and subdivided once.
+        ///
+        /// This stands in for every round thing in the landscape - tree crowns, boulders,
+        /// clouds - and it exists because Unity ships a sphere primitive of around seven
+        /// hundred and sixty triangles. At a hundred and fifty trees that is a hundred
+        /// thousand triangles of foliage nobody can resolve at thirty metres. This is
+        /// thirty-two, it reads as a low-poly crown on purpose rather than as a sphere that
+        /// failed, and the flat facets catch the directional light in a way that genuinely
+        /// helps the silhouette.
+        /// </summary>
+        public static Mesh BuildBlob()
+        {
+            // An octahedron: six points, eight faces, each then split into four.
+            Vector3[] points =
+            {
+                Vector3.up, Vector3.down,
+                Vector3.left, Vector3.right,
+                Vector3.forward, Vector3.back
+            };
+
+            int[][] faces =
+            {
+                new[] { 0, 4, 3 }, new[] { 0, 3, 5 }, new[] { 0, 5, 2 }, new[] { 0, 2, 4 },
+                new[] { 1, 3, 4 }, new[] { 1, 5, 3 }, new[] { 1, 2, 5 }, new[] { 1, 4, 2 }
+            };
+
+            var verts = new System.Collections.Generic.List<Vector3>(96);
+            var tris = new System.Collections.Generic.List<int>(96);
+            var uvs = new System.Collections.Generic.List<Vector2>(96);
+
+            foreach (int[] face in faces)
+            {
+                Vector3 a = points[face[0]], b = points[face[1]], c = points[face[2]];
+
+                // Edge midpoints, renormalised: that is what pushes the flat face out onto
+                // the sphere instead of just cutting it into four coplanar pieces.
+                Vector3 ab = (a + b).normalized;
+                Vector3 bc = (b + c).normalized;
+                Vector3 ca = (c + a).normalized;
+
+                AddFlatTriangle(verts, tris, uvs, a, ab, ca);
+                AddFlatTriangle(verts, tris, uvs, ab, b, bc);
+                AddFlatTriangle(verts, tris, uvs, ca, bc, c);
+                AddFlatTriangle(verts, tris, uvs, ab, bc, ca);
+            }
+
+            var mesh = new Mesh { name = "RR_Blob" };
+            mesh.SetVertices(verts);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// Adds one triangle with its own three vertices, so neighbouring faces do not share
+        /// normals and the facets stay crisp.
+        /// </summary>
+        private static void AddFlatTriangle(System.Collections.Generic.List<Vector3> verts,
+                                            System.Collections.Generic.List<int> tris,
+                                            System.Collections.Generic.List<Vector2> uvs,
+                                            Vector3 a, Vector3 b, Vector3 c)
+        {
+            int start = verts.Count;
+
+            // Halved, so the blob is a unit-diameter shape and localScale reads as a size.
+            verts.Add(a * 0.5f);
+            verts.Add(b * 0.5f);
+            verts.Add(c * 0.5f);
+
+            uvs.Add(new Vector2(0.5f, 0.5f));
+            uvs.Add(new Vector2(0.5f, 0.5f));
+            uvs.Add(new Vector2(0.5f, 0.5f));
+
+            tris.Add(start);
+            tris.Add(start + 1);
+            tris.Add(start + 2);
+        }
+
+        /// <summary>
+        /// A prism standing on the XZ plane with its base at the origin and its top closed.
+        /// Trunks, cactus limbs and standing stones are all prisms: six sides is plenty at
+        /// this distance, against the two hundred and forty triangles of a stock cylinder.
+        /// </summary>
+        public static Mesh BuildPrism(int sides, float radius, float height,
+                                      float topScale = 0.72f)
+        {
+            sides = Mathf.Max(3, sides);
+
+            var verts = new Vector3[sides * 2 + 1];
+            var uvs = new Vector2[verts.Length];
+            var tris = new int[sides * 6 + sides * 3];
+
+            for (int i = 0; i < sides; i++)
+            {
+                float a = i / (float)sides * Mathf.PI * 2f;
+                float cos = Mathf.Cos(a), sin = Mathf.Sin(a);
+                verts[i] = new Vector3(cos * radius, 0f, sin * radius);
+                verts[i + sides] = new Vector3(cos * radius * topScale, height,
+                                               sin * radius * topScale);
+            }
+
+            // A top cap, so a trunk is not hollow when a player leans over the table and
+            // looks down the length of it. The base sits in the ground and needs none.
+            int topCentre = sides * 2;
+            verts[topCentre] = new Vector3(0f, height, 0f);
+
+            for (int i = 0; i < verts.Length; i++) uvs[i] = new Vector2(0.5f, 0.5f);
+
+            int t = 0;
+            for (int i = 0; i < sides; i++)
+            {
+                int next = (i + 1) % sides;
+
+                tris[t++] = i; tris[t++] = i + sides; tris[t++] = next;
+                tris[t++] = next; tris[t++] = i + sides; tris[t++] = next + sides;
+
+                tris[t++] = topCentre; tris[t++] = i + sides; tris[t++] = next + sides;
+            }
+
+            var mesh = new Mesh { name = "RR_Prism" };
+            mesh.SetVertices(verts);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// A soft tiling ripple pattern for water.
+        ///
+        /// Generated rather than authored, like everything else here, and deliberately low
+        /// contrast: the job is to break up a flat plane just enough that scrolling it reads
+        /// as movement. Every term is a whole number of cycles across the tile, which is what
+        /// makes it seamless at the edges.
+        /// </summary>
+        public static Texture2D MakeRippleTexture(int size = 64)
+        {
+            size = Mathf.Clamp(size, 16, 256);
+
+            var texture = new Texture2D(size, size, TextureFormat.RGBA32, true)
+            {
+                name = "RR_Ripple",
+                wrapMode = TextureWrapMode.Repeat,
+                filterMode = FilterMode.Bilinear
+            };
+
+            var pixels = new Color[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float u = x / (float)size, v = y / (float)size;
+
+                    float wave = Mathf.Sin((u * 4f + v * 2f) * Mathf.PI * 2f) * 0.5f
+                               + Mathf.Sin((u * 2f - v * 5f) * Mathf.PI * 2f) * 0.3f
+                               + Mathf.Sin((u * 7f + v * 6f) * Mathf.PI * 2f) * 0.2f;
+
+                    float shade = 0.86f + wave * 0.14f;
+                    pixels[y * size + x] = new Color(shade, shade, shade, 1f);
+                }
+            }
+
+            texture.SetPixels(pixels);
+            texture.Apply(true, false);
+            return texture;
+        }
+
+        /// <summary>
+        /// A quad in the local XY plane, centred on its own origin. Clouds, wings and petals
+        /// are all quads; it is the cheapest thing that can be drawn.
+        /// </summary>
+        /// <param name="doubleSided">
+        /// Winds the quad both ways. Grass and palm fronds need it: a single-sided quad is
+        /// invisible from behind, and two crossed blades still leave two directions you can
+        /// stand in and see nothing at all. Six extra indices is a far cheaper fix than
+        /// turning culling off on the shared foliage material, which would double the fill
+        /// cost of every leaf in the biome.
+        /// </param>
+        public static Mesh BuildQuad(float width, float height, bool doubleSided = false)
+        {
+            float hw = width * 0.5f, hh = height * 0.5f;
+
+            var mesh = new Mesh { name = "RR_Quad" };
+            mesh.SetVertices(new[]
+            {
+                new Vector3(-hw, -hh, 0f), new Vector3(hw, -hh, 0f),
+                new Vector3(-hw,  hh, 0f), new Vector3(hw,  hh, 0f)
+            });
+            mesh.SetUVs(0, new[]
+            {
+                new Vector2(0f, 0f), new Vector2(1f, 0f),
+                new Vector2(0f, 1f), new Vector2(1f, 1f)
+            });
+            mesh.SetTriangles(doubleSided
+                ? new[] { 0, 2, 1, 2, 3, 1, 1, 2, 0, 1, 3, 2 }
+                : new[] { 0, 2, 1, 2, 3, 1 }, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// A triangle in the local XY plane with its root at the origin, pointing along +X.
+        /// This is a bird's wing: one triangle, rotated about the body to flap.
+        /// </summary>
+        public static Mesh BuildWing(float span, float chord)
+        {
+            var mesh = new Mesh { name = "RR_Wing" };
+            mesh.SetVertices(new[]
+            {
+                new Vector3(0f, 0f, chord * 0.5f),
+                new Vector3(span, 0f, chord * 0.18f),
+                new Vector3(0f, 0f, -chord * 0.5f)
+            });
+            mesh.SetUVs(0, new[]
+            {
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f)
+            });
+            // Both windings, so a wing is visible from above and below without a two-sided
+            // material. Six indices for three vertices is cheaper than doubling the mesh.
+            mesh.SetTriangles(new[] { 0, 1, 2, 2, 1, 0 }, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// Attaches a mesh to a new child object with no collider. Everything in the scenery
+        /// is decoration: a stone must never be able to hit a tree sixty metres away, and
+        /// keeping the physics scene to the rink alone is most of why this game holds its
+        /// frame budget.
+        /// </summary>
+        public static GameObject Attach(Transform parent, string name, Mesh mesh,
+                                        Material material, Vector3 localPosition,
+                                        Quaternion localRotation, Vector3 localScale,
+                                        bool castShadows = false)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = localPosition;
+            go.transform.localRotation = localRotation;
+            go.transform.localScale = localScale;
+
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+
+            var renderer = go.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial = material;
+            renderer.shadowCastingMode = castShadows
+                ? UnityEngine.Rendering.ShadowCastingMode.On
+                : UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+
+            return go;
+        }
+
+        /// <summary>
+        /// Scatters points on a ring around the table, biased outwards.
+        ///
+        /// The square root on the radius is what makes the scatter even. Interpolating the
+        /// radius linearly puts the same number of trees in the small inner ring as in the
+        /// huge outer one, which plants a visible thicket right at the table edge and leaves
+        /// the distance bare. Taking the root distributes by area instead.
+        /// </summary>
+        public static Vector2 ScatterPoint(System.Random random, float innerRadius,
+                                           float outerRadius)
+        {
+            float angle = (float)random.NextDouble() * Mathf.PI * 2f;
+            float t = (float)random.NextDouble();
+            float radius = Mathf.Sqrt(Mathf.Lerp(innerRadius * innerRadius,
+                                                 outerRadius * outerRadius, t));
+            return new Vector2(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius);
+        }
+    }
+}

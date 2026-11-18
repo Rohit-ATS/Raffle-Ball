@@ -5,6 +5,7 @@ using UnityEngine;
 using RiftRally.Core;
 using RiftRally.Gameplay;
 using RiftRally.Net;
+using RiftRally.Scenery;
 using RiftRally.Setup;
 
 namespace RiftRally.Presentation
@@ -76,6 +77,28 @@ namespace RiftRally.Presentation
             }
 
             if (Match != null) Match.StateChanged += OnMatchState;
+
+            Theme.Changed += OnThemeChanged;
+        }
+
+        private void OnDestroy()
+        {
+            Theme.Changed -= OnThemeChanged;
+        }
+
+        /// <summary>
+        /// Rebuilds the open screen in the new palette when the landscape rolls over.
+        ///
+        /// Only the screens that are just buttons and text, though. Rebuilding the lobby or
+        /// the connecting screen would throw away a room the player is sitting in, or cancel
+        /// the look of a connection in progress, to achieve a colour change - which is a
+        /// trade nobody would take.
+        /// </summary>
+        private void OnThemeChanged(Theme.Palette palette)
+        {
+            if (_root == null || !_root.gameObject.activeSelf) return;
+            if (Current != Screen.Home) return;
+            Show(Screen.Home);
         }
 
         private void BuildPanel()
@@ -99,18 +122,18 @@ namespace RiftRally.Presentation
 
             var backing = ProceduralArt.Box(_root, "Backing", new Vector3(0f, -0.02f, 0.012f),
                 new Vector3(0.46f, 0.44f, 0.008f),
-                ProceduralArt.MakeTransparentMaterial(new Color(0.04f, 0.06f, 0.10f, 0.78f)),
+                ProceduralArt.MakeTransparentMaterial(Theme.Panel),
                 false);
             backing.name = "Backing";
 
             _title = TextPanel.Create(_root, "Title", new Vector3(0f, 0.145f, 0f), 0.034f);
-            _title.Show("RIFT RALLY", GameConfig.TargetColor);
+            _title.Show("RIFT RALLY", Theme.Primary);
 
             _subtitle = TextPanel.Create(_root, "Subtitle", new Vector3(0f, 0.108f, 0f), 0.018f);
-            _subtitle.Show("", GameConfig.NeutralColor);
+            _subtitle.Show("", Theme.TextDim);
 
             _status = TextPanel.Create(_root, "Status", new Vector3(0f, -0.185f, 0f), 0.015f);
-            _status.Show("", GameConfig.NeutralColor);
+            _status.Show("", Theme.TextDim);
 
             _board = TextPanel.Create(_root, "Board", new Vector3(0f, 0.02f, 0f), 0.0165f);
             _board.HideInstant();
@@ -146,7 +169,7 @@ namespace RiftRally.Presentation
 
         private void BuildHome()
         {
-            _subtitle.Show("PINCH A BUTTON TO BEGIN", GameConfig.NeutralColor);
+            _subtitle.Show("PINCH A BUTTON TO BEGIN", Theme.TextDim);
 
             Add("PLAY SOLO", 0.055f, GameConfig.PlayerOneColor, () =>
             {
@@ -154,7 +177,7 @@ namespace RiftRally.Presentation
                 Match?.StartMatch(GameMode.SoloVsAi);
             });
 
-            Add("PLAY ONLINE", 0f, GameConfig.TargetColor, () => Show(Screen.Online));
+            Add("PLAY ONLINE", 0f, Theme.Primary, () => Show(Screen.Online));
 
             Add("LEADERBOARD", -0.055f, new Color(0.62f, 0.52f, 0.92f),
                 () => Show(Screen.Leaderboard));
@@ -164,6 +187,53 @@ namespace RiftRally.Presentation
                 Hide();
                 Match?.StartMatch(GameMode.HotSeatTwoPlayer);
             });
+
+            BuildLandscapeRow(-0.165f);
+        }
+
+        /// <summary>
+        /// A landscape picker on the first screen.
+        ///
+        /// The dock has the same control, but putting one here as well is worth the
+        /// duplication: the lobby is where somebody is deciding what kind of game they are
+        /// about to have, the landscape has just rolled over to something new, and standing
+        /// in it while choosing is the natural moment to say no, not that one. Changing it
+        /// here rebuilds the world immediately, so the choice is made by looking rather than
+        /// by reading a name.
+        /// </summary>
+        private void BuildLandscapeRow(float y)
+        {
+            string name = LandscapeRotation.Current.Name.ToUpperInvariant();
+
+            // Built directly rather than through Add, because this row is narrower than a
+            // full-width button to leave room for the two arrow keys beside it. The width is
+            // read when the plate is built, so it has to be passed in, not set afterwards.
+            var label = PinchButton.Create(_root, $"WORLD: {name}", new Vector3(0f, y, 0f),
+                                           0.22f, 0.042f, Theme.Secondary,
+                                           () => StepLandscape(1));
+            _buttons.Add(label);
+
+            var back = PinchButton.Create(_root, "<", new Vector3(-0.16f, y, 0f),
+                                          0.05f, 0.042f, Theme.TextDim,
+                                          () => StepLandscape(-1));
+            _buttons.Add(back);
+
+            var forward = PinchButton.Create(_root, ">", new Vector3(0.16f, y, 0f),
+                                             0.05f, 0.042f, Theme.TextDim,
+                                             () => StepLandscape(1));
+            _buttons.Add(forward);
+        }
+
+        private void StepLandscape(int delta)
+        {
+            LandscapeDirector director = LandscapeDirector.Instance;
+            if (director != null) director.Step(delta);
+            else LandscapeRotation.Step(delta);
+
+            // The panel is rebuilt rather than relabelled, because the new biome has brought
+            // a new interface palette with it and every button on this screen is tinted from
+            // it. Rebuilding is how the whole lobby re-colours in one go.
+            Show(Screen.Home);
         }
 
         private void BuildOnline()
@@ -171,9 +241,9 @@ namespace RiftRally.Presentation
             string who = Net?.Me != null
                 ? $"PLAYING AS {Net.Me.displayName.ToUpperInvariant()}"
                 : "CONNECTING...";
-            _subtitle.Show(who, GameConfig.NeutralColor);
+            _subtitle.Show(who, Theme.TextDim);
 
-            Add("QUICK MATCH", 0.055f, GameConfig.TargetColor,
+            Add("QUICK MATCH", 0.055f, Theme.Primary,
                 () => StartCoroutine(GoOnline(() => Net.QuickMatch())));
 
             Add("CREATE A ROOM", 0f, GameConfig.PlayerOneColor,
@@ -182,7 +252,7 @@ namespace RiftRally.Presentation
             Add("JOIN WITH A CODE", -0.055f, GameConfig.PlayerTwoColor,
                 () => Show(Screen.JoinCode));
 
-            Add("BACK", -0.12f, GameConfig.NeutralColor, () => Show(Screen.Home));
+            Add("BACK", -0.12f, Theme.TextDim, () => Show(Screen.Home));
         }
 
         /// <summary>
@@ -191,7 +261,7 @@ namespace RiftRally.Presentation
         /// </summary>
         private void BuildJoinCode()
         {
-            _subtitle.Show("ENTER THE FOUR CHARACTER CODE", GameConfig.NeutralColor);
+            _subtitle.Show("ENTER THE FOUR CHARACTER CODE", Theme.TextDim);
             _codeEntry.Clear();
             UpdateCodeDisplay();
 
@@ -215,7 +285,7 @@ namespace RiftRally.Presentation
                 _buttons.Add(button);
             }
 
-            Add("JOIN", -0.145f, GameConfig.TargetColor, () =>
+            Add("JOIN", -0.145f, Theme.Primary, () =>
             {
                 if (_codeEntry.Length != 4)
                 {
@@ -226,7 +296,7 @@ namespace RiftRally.Presentation
                 StartCoroutine(GoOnline(() => Net.JoinRoom(code)));
             });
 
-            Add("BACK", -0.19f, GameConfig.NeutralColor, () => Show(Screen.Online));
+            Add("BACK", -0.19f, Theme.TextDim, () => Show(Screen.Online));
         }
 
         private void BuildLobby()
@@ -238,7 +308,7 @@ namespace RiftRally.Presentation
                 return;
             }
 
-            _subtitle.Show($"ROOM CODE   {room.code}", GameConfig.TargetColor);
+            _subtitle.Show($"ROOM CODE   {room.code}", Theme.Primary);
 
             string opponent = "WAITING FOR AN OPPONENT";
             if (room.players != null)
@@ -253,18 +323,18 @@ namespace RiftRally.Presentation
             }
 
             _board.Show($"{opponent}\n\nREAD THE CODE OUT TO A FRIEND\nAND THEY CAN JOIN YOU",
-                        GameConfig.NeutralColor);
+                        Theme.TextDim);
 
             bool canReady = room.players != null
                             && room.players.Length > 1
                             && room.players[0] != null
                             && room.players[1] != null;
 
-            var ready = Add("I AM READY", -0.10f, GameConfig.TargetColor,
+            var ready = Add("I AM READY", -0.10f, Theme.Primary,
                             () => Net.SetReady(true));
             ready.Interactable = canReady;
 
-            Add("LEAVE", -0.155f, GameConfig.NeutralColor, () =>
+            Add("LEAVE", -0.155f, Theme.TextDim, () =>
             {
                 Net.LeaveRoom();
                 Show(Screen.Online);
@@ -273,19 +343,19 @@ namespace RiftRally.Presentation
 
         private void BuildLeaderboard()
         {
-            _subtitle.Show("TOP PLAYERS", GameConfig.NeutralColor);
-            _board.Show("LOADING...", GameConfig.NeutralColor);
+            _subtitle.Show("TOP PLAYERS", Theme.TextDim);
+            _board.Show("LOADING...", Theme.TextDim);
 
-            Add("BACK", -0.155f, GameConfig.NeutralColor, () => Show(Screen.Home));
+            Add("BACK", -0.155f, Theme.TextDim, () => Show(Screen.Home));
             StartCoroutine(LoadLeaderboard());
         }
 
         private void BuildConnecting()
         {
-            _subtitle.Show("REACHING THE SERVER", GameConfig.NeutralColor);
+            _subtitle.Show("REACHING THE SERVER", Theme.TextDim);
             _board.Show("THE FREE SERVER SLEEPS WHEN IDLE,\nSO THE FIRST CONNECTION\nCAN TAKE A MOMENT",
-                        GameConfig.NeutralColor);
-            Add("CANCEL", -0.155f, GameConfig.NeutralColor, () =>
+                        Theme.TextDim);
+            Add("CANCEL", -0.155f, Theme.TextDim, () =>
             {
                 Net?.Disconnect();
                 Show(Screen.Online);
@@ -350,7 +420,7 @@ namespace RiftRally.Presentation
 
             if (board?.entries == null || board.entries.Length == 0)
             {
-                _board.Show("NO MATCHES PLAYED YET.\nBE THE FIRST.", GameConfig.NeutralColor);
+                _board.Show("NO MATCHES PLAYED YET.\nBE THE FIRST.", Theme.TextDim);
                 yield break;
             }
 
@@ -374,7 +444,7 @@ namespace RiftRally.Presentation
             text.AppendLine();
             text.Append("* GUEST");
 
-            _board.Show(text.ToString(), GameConfig.NeutralColor);
+            _board.Show(text.ToString(), Theme.TextDim);
         }
 
         private IEnumerator ShowAfterMatch()
@@ -393,7 +463,7 @@ namespace RiftRally.Presentation
         private void UpdateCodeDisplay()
         {
             string shown = _codeEntry.ToString().PadRight(4, '_');
-            _board.Show(string.Join(" ", shown.ToCharArray()), GameConfig.TargetColor);
+            _board.Show(string.Join(" ", shown.ToCharArray()), Theme.Primary);
         }
 
         // ---------------------------------------------------------------- reactions
@@ -438,7 +508,7 @@ namespace RiftRally.Presentation
         private void SetStatus(string text)
         {
             if (_status == null) return;
-            _status.Show((text ?? string.Empty).ToUpperInvariant(), GameConfig.NeutralColor);
+            _status.Show((text ?? string.Empty).ToUpperInvariant(), Theme.TextDim);
         }
 
         private PinchButton Add(string label, float y, Color tint, System.Action onPressed)

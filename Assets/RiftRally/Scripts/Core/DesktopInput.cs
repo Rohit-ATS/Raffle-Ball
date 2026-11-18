@@ -14,7 +14,13 @@ namespace RiftRally.Core
         LeftHand, RightHand,
         HandForward, HandBack, HandLeft, HandRight,
         Reset, ToggleHelp,
-        Confirm
+        Confirm,
+
+        /// <summary>Opens and closes the in-game options dock.</summary>
+        ToggleOptions,
+
+        /// <summary>Jumps straight to the next landscape, for looking through them quickly.</summary>
+        NextLandscape
     }
 
     /// <summary>
@@ -95,6 +101,8 @@ namespace RiftRally.Core
                 SimKey.ToggleHelp => keyboard.f1Key.wasPressedThisFrame
                                      || keyboard.hKey.wasPressedThisFrame,
                 SimKey.Confirm => keyboard.enterKey.wasPressedThisFrame,
+                SimKey.ToggleOptions => keyboard.tabKey.wasPressedThisFrame,
+                SimKey.NextLandscape => keyboard.nKey.wasPressedThisFrame,
                 _ => false,
             };
 #elif ENABLE_LEGACY_INPUT_MANAGER
@@ -103,6 +111,8 @@ namespace RiftRally.Core
                 SimKey.Reset => Input.GetKeyDown(KeyCode.R),
                 SimKey.ToggleHelp => Input.GetKeyDown(KeyCode.F1) || Input.GetKeyDown(KeyCode.H),
                 SimKey.Confirm => Input.GetKeyDown(KeyCode.Return),
+                SimKey.ToggleOptions => Input.GetKeyDown(KeyCode.Tab),
+                SimKey.NextLandscape => Input.GetKeyDown(KeyCode.N),
                 _ => false,
             };
 #else

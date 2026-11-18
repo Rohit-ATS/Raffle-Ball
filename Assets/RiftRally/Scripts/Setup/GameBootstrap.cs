@@ -1,9 +1,11 @@
 using System;
+using System.Collections;
 using UnityEngine;
 using RiftRally.Core;
 using RiftRally.Gameplay;
 using RiftRally.Net;
 using RiftRally.Presentation;
+using RiftRally.Scenery;
 
 namespace RiftRally.Setup
 {
@@ -55,10 +57,18 @@ namespace RiftRally.Setup
         public bool ApplyQualitySettings = true;
 
         [Header("World")]
-        [Tooltip("Build a different procedural landscape around the rink each launch.")]
+        [Tooltip("Build a landscape around the rink, rolling onto the next one each game.")]
         public bool CreateProceduralEnvironment = true;
 
-        public string EnvironmentName { get; private set; }
+        [Tooltip("Build the near-field HUD and the in-game options dock.")]
+        public bool CreateHudDock = true;
+
+        /// <summary>Owns the landscape, and swaps it between games.</summary>
+        public LandscapeDirector Scenery { get; private set; }
+
+        public HudDock Dock { get; private set; }
+
+        public string EnvironmentName => Scenery != null ? Scenery.CurrentName : "none";
 
         [Tooltip("Simulate the headset and hands when no XR device is present, so the game " +
                  "can be played and tested on a desktop through the real VR code path.")]
@@ -118,14 +128,20 @@ namespace RiftRally.Setup
 
             if (CreateProceduralEnvironment)
             {
-                Color sky;
-                int seed = unchecked((int)DateTime.Now.Ticks) ^ GetInstanceID();
-                EnvironmentName = EnvironmentBuilder.Build(transform, seed, out sky);
-                SetWorldSky(sky);
-                Debug.Log($"[RiftRally] Procedural environment: {EnvironmentName} ({seed}).");
+                var sceneryGo = new GameObject("Scenery");
+                sceneryGo.transform.SetParent(transform, false);
+
+                Scenery = sceneryGo.AddComponent<LandscapeDirector>();
+                Scenery.SetHost(sceneryGo.transform);
+                Scenery.Density = LandscapeBuilder.DensityFor(Quality);
+
+                // Launching is a new game, so it moves the rotation on. A player who put the
+                // headset down in the desert comes back to somewhere else.
+                Scenery.BuildForNewGame();
             }
 
-            Debug.Log($"[RiftRally] Rink built; drawing with shader '{ProceduralArt.ShaderReport}'.");
+            Debug.Log($"[RiftRally] Rink built; drawing with shader '{ProceduralArt.ShaderReport}', "
+                      + $"text in '{Typography.FaceReport}'.");
 
             // ---- hands ----
             Hands = GetComponent<HandInput>();
@@ -184,6 +200,20 @@ namespace RiftRally.Setup
                 Hud.Playfield = Playfield;
             }
 
+            // The near-field dock: score and options within reach, under the sightline to
+            // the house. Built after the match so it can subscribe to it, and after the
+            // scenery so its first frame is already in the biome palette.
+            if (CreateHudDock)
+            {
+                var dockGo = new GameObject("HudDock");
+                dockGo.transform.SetParent(transform, false);
+                Dock = dockGo.AddComponent<HudDock>();
+                Dock.Match = Match;
+                Dock.Launcher = Launcher;
+                Dock.Playfield = Playfield;
+                Dock.Scenery = Scenery;
+            }
+
 
             if (CreateHandVisuals)
             {
@@ -213,7 +243,14 @@ namespace RiftRally.Setup
             {
                 var tuner = gameObject.AddComponent<QualityTuner>();
                 tuner.Quality = Quality;
+                tuner.Scenery = Scenery;
             }
+
+            // Rolling the landscape over is hung off the end of a match rather than the
+            // start of one. Building a world costs a few frames, and spending them while the
+            // player is reading the final tally is free, where spending them as the first
+            // stone is about to be thrown would not be.
+            if (Scenery != null && Match != null) Match.MatchEnded += _ => RollLandscapeSoon();
 
             if (EnableMultiplayer)
             {
@@ -249,6 +286,24 @@ namespace RiftRally.Setup
                 audio.Launcher = Launcher;
                 audio.Playfield = Playfield;
             }
+        }
+
+        /// <summary>
+        /// Moves the rotation on to the next landscape a moment after a match finishes, so
+        /// the lobby the player returns to is already somewhere new.
+        /// </summary>
+        private void RollLandscapeSoon()
+        {
+            if (!gameObject.activeInHierarchy) return;
+            StartCoroutine(RollLandscape());
+        }
+
+        private IEnumerator RollLandscape()
+        {
+            // Real time, not scaled: a decisive final shot leaves the slow-motion effect
+            // running, and the wait would stretch with it.
+            yield return new WaitForSecondsRealtime(3.5f);
+            if (Scenery != null) Scenery.BuildForNewGame();
         }
 
         /// <summary>
@@ -302,20 +357,25 @@ namespace RiftRally.Setup
 
                 var cam = camGo.AddComponent<Camera>();
                 cam.nearClipPlane = 0.02f;
-                cam.farClipPlane = 50f;
+
+                // Far enough to contain the landscape and the sky dome standing behind it.
+                // This was 50 m, which is correct for a game that is only a table and was
+                // quietly clipping away every hill and the entire sky.
+                cam.farClipPlane = 400f;
                 cam.fieldOfView = 62f;
-                cam.backgroundColor = new Color(0.12f, 0.10f, 0.14f);
                 cam.clearFlags = CameraClearFlags.SolidColor;
             }
 
-            // Whatever camera we ended up with - ours or the XR rig's - gets the current
-            // environment's sky color before the biome is applied below.
+            // Whatever camera we ended up with - ours or the XR rig's - has to be able to see
+            // both ends of the scale this game works at: a stone two centimetres across in
+            // the hands, and a ridge sixty metres out. The landscape builder sets the
+            // background to the biome horizon once it knows which biome it is.
             if (Camera.main != null)
             {
                 Camera main = Camera.main;
                 main.clearFlags = CameraClearFlags.SolidColor;
-                main.backgroundColor = new Color(0.12f, 0.10f, 0.14f);
                 main.nearClipPlane = Mathf.Min(main.nearClipPlane, 0.02f);
+                main.farClipPlane = Mathf.Max(main.farClipPlane, 400f);
             }
 
             bool haveLight = false;
@@ -335,22 +395,6 @@ namespace RiftRally.Setup
                 light.intensity = 1.05f;
                 light.color = new Color(0.92f, 0.95f, 1f);
                 light.shadows = LightShadows.Soft;
-            }
-        }
-
-        private static void SetWorldSky(Color sky)
-        {
-            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-            RenderSettings.ambientLight = Color.Lerp(sky, Color.white, 0.20f);
-            RenderSettings.fog = true;
-            RenderSettings.fogColor = sky;
-            RenderSettings.fogMode = FogMode.ExponentialSquared;
-            RenderSettings.fogDensity = 0.018f;
-
-            if (Camera.main != null)
-            {
-                Camera.main.clearFlags = CameraClearFlags.SolidColor;
-                Camera.main.backgroundColor = sky;
             }
         }
 

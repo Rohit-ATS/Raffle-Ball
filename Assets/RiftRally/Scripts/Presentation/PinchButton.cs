@@ -81,8 +81,9 @@ namespace RiftRally.Presentation
 
             // The label sits slightly in front so it is never z-fighting with the plate.
             _label = TextPanel.Create(transform, "Label", new Vector3(0f, 0f, -0.005f),
-                                      Height * 0.52f);
-            _label.Show(label, Color.white);
+                                      Height * 0.52f, TextAnchor.MiddleCenter,
+                                      FontStyle.Bold);
+            _label.Show(label, Theme.Text);
         }
 
         private void Update()
@@ -155,10 +156,12 @@ namespace RiftRally.Presentation
 
             ProceduralArt.SetGlowFade(_plateMaterial, tint, alpha, emission);
 
+            // Label colour comes from the live theme, so a button built in one biome still
+            // reads correctly after the landscape has rolled over to another.
             if (_label != null)
                 _label.SetColor(Interactable
-                    ? Color.Lerp(new Color(0.88f, 0.93f, 1f), Color.white, _hover)
-                    : new Color(0.6f, 0.65f, 0.7f));
+                    ? Color.Lerp(Theme.Text, Color.white, _hover)
+                    : Color.Lerp(Theme.TextDim, Color.gray, 0.6f));
         }
 
         /// <summary>True when a world point is inside the button's slab.</summary>
