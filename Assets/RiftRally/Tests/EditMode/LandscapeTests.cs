@@ -93,6 +93,53 @@ namespace RiftRally.Tests
         }
 
         [Test]
+        public void FloweringBiomesHaveABloomTheirOwnGroundCoverDoesNot()
+        {
+            // Flowers are the one piece of planting whose job is colour. A flower colour that
+            // matches the grass it stands in is a few hundred draw calls spent on nothing,
+            // and it is the easy mistake to make when filling in a new biome by eye.
+            foreach (Landscape landscape in LandscapeCatalog.All)
+            {
+                if (landscape.FlowerCount <= 0) continue;
+
+                float distance = Mathf.Abs(landscape.FlowerColor.r - landscape.GrassColor.r)
+                               + Mathf.Abs(landscape.FlowerColor.g - landscape.GrassColor.g)
+                               + Mathf.Abs(landscape.FlowerColor.b - landscape.GrassColor.b);
+
+                Assert.That(distance, Is.GreaterThan(0.25f),
+                    $"{landscape.Name}: the flowers are the same colour as the grass");
+            }
+        }
+
+        [Test]
+        public void OnlyWaterBiomesAskForReeds()
+        {
+            // Reeds are placed by searching for ground near the waterline. In a biome with no
+            // water there is no waterline, so the count is not merely ignored - it is a sign
+            // that whoever filled the entry in was copying rather than describing a place.
+            foreach (Landscape landscape in LandscapeCatalog.All)
+            {
+                if (landscape.ReedCount <= 0) continue;
+
+                Assert.That(landscape.HasWater, Is.True,
+                    $"{landscape.Name} grows reeds but has no water for them to stand in");
+            }
+        }
+
+        [Test]
+        public void EveryBiomeHasSomethingBetweenItsGrassAndItsTrees()
+        {
+            // The undergrowth layer is what stops a landscape reading as trees standing in a
+            // lawn. A biome with none of it builds perfectly well and looks like a diagram.
+            foreach (Landscape landscape in LandscapeCatalog.All)
+            {
+                Assert.That(landscape.BushCount + landscape.FlowerCount, Is.GreaterThan(0),
+                    $"{landscape.Name} has no scrub and no bloom, so the middle distance is "
+                    + "bare ground between the tufts and the treeline");
+            }
+        }
+
+        [Test]
         public void WaterBiomesHaveGroundBelowTheirWaterline()
         {
             // If the lowest the ground can go is still above the water plane, the water is

@@ -36,6 +36,7 @@ namespace RiftRally.Scenery
 
         private LandscapeBuilder.Built _built;
         private Transform _host;
+        private QualityTuner.Preset? _appliedPreset;
 
         private void Awake()
         {
@@ -116,16 +117,38 @@ namespace RiftRally.Scenery
         public void SetHost(Transform host) => _host = host;
 
         /// <summary>
-        /// Matches the planting density to a quality preset, and rebuilds if a world is
-        /// already up so the change is visible straight away.
+        /// Matches the landscape to a quality preset - planting density, terrain mesh
+        /// resolution and texture budget - and rebuilds if a world is already up, so the
+        /// change is visible straight away.
+        ///
+        /// All three move together, and the preset is what is compared rather than the
+        /// density, because two presets can want the same amount of planting at different
+        /// resolutions. Comparing density alone meant a preset change that only altered the
+        /// texture budget was silently ignored until the next match.
         /// </summary>
         public void ApplyQuality(QualityTuner.Preset preset)
         {
-            float density = LandscapeBuilder.DensityFor(preset);
-            if (Mathf.Approximately(density, Density)) return;
+            if (_appliedPreset == preset) return;
 
-            Density = density;
+            ConfigureQuality(preset);
             if (_built != null) Build(_built.Landscape);
+        }
+
+        /// <summary>
+        /// Sets the quality dials without rebuilding anything.
+        ///
+        /// This is what the bootstrap calls before the first landscape goes up. Letting the
+        /// quality tuner discover the preset afterwards instead meant the opening landscape
+        /// was built twice - once at the default resolution and once at the chosen one - and
+        /// at four thousand pixels square the second bake is not a rounding error.
+        /// </summary>
+        public void ConfigureQuality(QualityTuner.Preset preset)
+        {
+            _appliedPreset = preset;
+
+            Density = LandscapeBuilder.DensityFor(preset);
+            LandscapeBuilder.TerrainResolution = LandscapeBuilder.TerrainResolutionFor(preset);
+            NatureTextures.Budget = NatureTextures.BudgetFor(preset);
         }
 
         /// <summary>

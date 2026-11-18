@@ -88,7 +88,14 @@ namespace RiftRally.Setup
             QualitySettings.shadowDistance = 6f;      // table-scale game; no distant shadows
             QualitySettings.shadowResolution = ShadowResolution.Medium;
             QualitySettings.shadowCascades = 1;
-            QualitySettings.anisotropicFiltering = AnisotropicFiltering.Enable;
+            QualitySettings.anisotropicFiltering = AnisotropicFiltering.ForceEnable;
+
+            // Full mip chains, no global texture downscale. The landscape's ground is a 4096
+            // image seen at a grazing angle across sixty metres, which is the exact case
+            // anisotropic filtering exists for - without it the far half of the hillside
+            // smears into mush - and a mipmap limit above zero would quietly undo the entire
+            // point of baking the surface at that resolution in the first place.
+            QualitySettings.globalTextureMipmapLimit = 0;
             QualitySettings.skinWeights = SkinWeights.TwoBones;
             QualitySettings.particleRaycastBudget = 16;
             QualitySettings.softParticles = false;
@@ -107,10 +114,23 @@ namespace RiftRally.Setup
             // Hands-only game: no need to keep a controller-shaped input path warm.
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
 
-            // The landscape thins out with the render settings. Supersampling is the dial
-            // that matters for the rink, but on a device that is already missing frames the
-            // hundred and fifty trees on the hillside are the cheapest thing to give up, and
-            // a player looking at the table will not notice the far treeline getting sparser.
+            // The landscape thins out with the render settings - planting density, terrain
+            // mesh resolution and the resolution the ground and sky are baked at.
+            // Supersampling is still the dial that matters for the rink, but on a device that
+            // is already missing frames the hundred and fifty trees on the hillside are the
+            // cheapest thing to give up, and a player looking at the table will not notice
+            // the far treeline getting sparser.
+            //
+            // The statics are set even when there is no director, so a landscape built later
+            // in the session - by a scene tool, a test, or a director created after this
+            // component - starts at the right resolution rather than at the default.
+            // Spelled out from the root namespace: this component has a field called Scenery,
+            // which shadows the namespace of the same name inside its own methods.
+            RiftRally.Scenery.LandscapeBuilder.TerrainResolution =
+                RiftRally.Scenery.LandscapeBuilder.TerrainResolutionFor(preset);
+            RiftRally.Scenery.NatureTextures.Budget =
+                RiftRally.Scenery.NatureTextures.BudgetFor(preset);
+
             if (Scenery != null) Scenery.ApplyQuality(preset);
         }
 

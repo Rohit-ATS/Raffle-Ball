@@ -61,12 +61,42 @@ the options dock or the lobby.
 
 **Everything is generated, including the birds.** Terrain is a noise heightmap flattened to
 level ground under the table; trees are built per biome from prisms, cones and faceted blobs;
-the sky is an inside-out dome sampling a baked colour ramp, which is how a gradient sky and a
-grass-to-rock-to-snow hillside each cost one material on stock URP shaders. The flocks are
-three triangles a bird, and almost all of the life in them is in the flight path — birds bank
-into their turns, lose height on the outside of a curve, and beat their wings in bursts with
-glides between, because a bird on a constant-speed circle reads as a fairground ride. Still no
-binary assets: the repository carries no textures, meshes or audio.
+the sky is an inside-out dome. The flocks are three triangles a bird, and almost all of the
+life in them is in the flight path — birds bank into their turns, lose height on the outside
+of a curve, and beat their wings in bursts with glides between, because a bird on a
+constant-speed circle reads as a fairground ride. Still no binary assets: the repository
+carries no textures, meshes or audio.
+
+**The ground and the sky are baked at 4K, at load time, from the biome's own terrain.** The
+landscape used to be shaded by a 128-pixel colour ramp, which is a very cheap way to paint a
+hillside and reads correctly in a screenshot. In a headset it fails in a particular way: a
+surface with no detail anywhere between one metre and sixty has no sense of scale, so the
+hills read as a painted backdrop rather than as ground. Stereo vision makes that worse rather
+than better — both eyes agree the shape is distant, and flat colour gives them nothing to
+converge on.
+
+So each biome now bakes a 4096 × 4096 ground image and a matching normal map, addressed by a
+planar world UV: grass in the hollows, bare rock on the faces that are genuinely too steep to
+hold soil, a bleached ridge line, light and shade across tens of metres, metre-scale patchwork
+and decimetre grain — about one texel per three centimetres of a hundred-and-twenty-metre
+world. The sky is baked the same way, and in two dimensions rather than one, so it is no
+longer the same backdrop whichever way you turn: cirrus banding, a bright quarter around the
+sun's bearing, stars in the night biomes. Bark, leaf mass, rock and grass are baked as tiling
+surfaces, shared between biomes and tinted per biome, and the ground cover is alpha-clipped
+blades rather than solid rectangles.
+
+Two details worth knowing about. The ground's colouring is read from the hill the terrain
+*would* have been without the flattening under the table, because colouring from the flattened
+field put a plateau of valley colour under the rink and a ring of false slope around it, which
+the rock rule then painted grey — a target ring on the ground in every biome. And the bake is
+fast enough to do at load because only the large-scale shape comes from the engine's noise, on
+the main thread at a coarse resolution; everything finer is hand-rolled hashed noise with no
+shared state, generated across every core at once.
+
+The budget scales: 4096 on a desktop GPU, 2048 on a standalone headset, 512 once the frame
+rate says so, and dropping a preset frees what the old one was holding. `Rift Rally → Export
+Landscape Textures` writes every bake out as a PNG, which is also how the store screenshots
+get made.
 
 **The interface recolours with the landscape.** Each biome carries its own UI palette, chosen
 against its own sky rather than alongside it — the bright biomes get darker, more opaque

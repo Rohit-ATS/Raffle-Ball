@@ -63,7 +63,11 @@ namespace RiftRally.Scenery
                     verts[i] = new Vector3(Mathf.Cos(angle) * ring * radius,
                                            y * radius * 0.92f,
                                            Mathf.Sin(angle) * ring * radius);
-                    uvs[i] = new Vector2(ramp, 0.5f);
+                    // UV.x is the horizon-to-zenith ramp coordinate, unchanged. UV.y is the
+                    // compass bearing, which a 1D ramp ignores - it is one pixel tall - but
+                    // which a baked sky uses as its second axis. Writing it costs nothing,
+                    // and it is what lets the sky differ depending which way you face.
+                    uvs[i] = new Vector2(ramp, s / (float)segments);
                 }
             }
 
@@ -104,19 +108,27 @@ namespace RiftRally.Scenery
         /// smoothed rather than stepped, because a hard ring of hills around a flat disc looks
         /// exactly like what it is.
         ///
-        /// UV.x carries a shading coordinate built from height and slope, which the ground
-        /// ramp turns into grass, rock and snow. Writing it here rather than in a shader is
-        /// what keeps the whole landscape on stock URP.
+        /// UV0 is a planar world-space coordinate, so the baked ground texture from
+        /// <see cref="NatureTextures"/> lands on the terrain exactly where it was painted -
+        /// grass in the hollows, rock on the steep faces, the same places the height function
+        /// put them. UV1 keeps the older height-and-slope shading coordinate, which is what a
+        /// plain colour ramp is sampled by when no baked texture is available.
         /// </summary>
         public static Mesh BuildTerrain(Landscape landscape, int seed, float extent = 62f,
-                                        int resolution = 56, float flatRadius = 3.6f,
+                                        int resolution = 144, float flatRadius = 3.6f,
                                         float flatFalloff = 5.5f)
         {
-            resolution = Mathf.Clamp(resolution, 8, 160);
+            // The ceiling used to be 160, which was a budget decision taken when the ground
+            // was a flat colour: more vertices bought nothing because there was no detail for
+            // them to carry. With a baked surface on it the terrain is the one mesh in the
+            // world worth spending vertices on, so the ceiling is raised and the preset
+            // decides where in the range to sit.
+            resolution = Mathf.Clamp(resolution, 8, 384);
 
             int side = resolution + 1;
             var verts = new Vector3[side * side];
             var uvs = new Vector2[verts.Length];
+            var shadeUvs = new Vector2[verts.Length];
             var tris = new int[resolution * resolution * 6];
 
             float step = extent * 2f / resolution;
@@ -156,7 +168,14 @@ namespace RiftRally.Scenery
                         Mathf.InverseLerp(-GroundBaseline * range,
                                           (1f - GroundBaseline) * range, verts[i].y));
                     float shade = Mathf.Clamp01(normalised * 0.78f + slope * 0.55f);
-                    uvs[i] = new Vector2(shade, 0.5f);
+                    shadeUvs[i] = new Vector2(shade, 0.5f);
+
+                    // The planar coordinate the baked ground texture is addressed by. It maps
+                    // the whole world square onto the whole image once, with no tiling: a
+                    // tiled ground texture repeats visibly at this size, and the point of
+                    // baking the biome's own terrain into it is that it is not a repeat.
+                    uvs[i] = new Vector2((verts[i].x + extent) / (extent * 2f),
+                                         (verts[i].z + extent) / (extent * 2f));
                 }
             }
 
@@ -181,8 +200,14 @@ namespace RiftRally.Scenery
                 : UnityEngine.Rendering.IndexFormat.UInt16;
             mesh.SetVertices(verts);
             mesh.SetUVs(0, uvs);
+            mesh.SetUVs(1, shadeUvs);
             mesh.SetTriangles(tris, 0);
             mesh.RecalculateNormals();
+
+            // Tangents, which a mesh built by hand does not get for free. Without them the
+            // ground's normal map is sampled against an undefined tangent frame, and the
+            // relief lights from a direction that has nothing to do with the sun.
+            mesh.RecalculateTangents();
             mesh.RecalculateBounds();
             return mesh;
         }
@@ -272,18 +297,23 @@ namespace RiftRally.Scenery
                 Vector3 tip = new Vector3(0f, height, 0f);
 
                 verts[v + 0] = p0; verts[v + 1] = tip; verts[v + 2] = p1;
+
+                // Wrapped round the cone and up to the tip, so a needle or leaf texture runs
+                // the way the foliage does rather than being a flat tint per facet.
+                uvs[v + 0] = new Vector2(s / (float)segments, 0f);
+                uvs[v + 1] = new Vector2((s + 0.5f) / segments, 1f);
+                uvs[v + 2] = new Vector2((s + 1) / (float)segments, 0f);
                 v += 3;
 
                 // Base cap, wound the other way so it is visible from underneath.
                 verts[v + 0] = p1; verts[v + 1] = Vector3.zero; verts[v + 2] = p0;
+                uvs[v + 0] = new Vector2((s + 1) / (float)segments, 0f);
+                uvs[v + 1] = new Vector2((s + 0.5f) / segments, 0.1f);
+                uvs[v + 2] = new Vector2(s / (float)segments, 0f);
                 v += 3;
             }
 
-            for (int i = 0; i < tris.Length; i++)
-            {
-                tris[i] = i;
-                uvs[i] = new Vector2(0.5f, 0.5f);
-            }
+            for (int i = 0; i < tris.Length; i++) tris[i] = i;
 
             var mesh = new Mesh { name = "RR_Cone" };
             mesh.SetVertices(verts);
@@ -366,13 +396,30 @@ namespace RiftRally.Scenery
             verts.Add(b * 0.5f);
             verts.Add(c * 0.5f);
 
-            uvs.Add(new Vector2(0.5f, 0.5f));
-            uvs.Add(new Vector2(0.5f, 0.5f));
-            uvs.Add(new Vector2(0.5f, 0.5f));
+            // A spherical coordinate per corner, so a leaf-mass or rock texture varies across
+            // the blob instead of painting every facet the same colour. These used to all be
+            // the texture centre, which was fine when nothing here was textured.
+            uvs.Add(SphericalUv(a));
+            uvs.Add(SphericalUv(b));
+            uvs.Add(SphericalUv(c));
 
             tris.Add(start);
             tris.Add(start + 1);
             tris.Add(start + 2);
+        }
+
+        /// <summary>
+        /// A latitude-longitude UV for a point on a unit sphere. The seam where longitude
+        /// wraps is left as it is: everything mapped this way wears a noise texture with no
+        /// features to misalign, and hiding the seam properly would mean duplicating a column
+        /// of vertices on a thirty-two triangle mesh.
+        /// </summary>
+        private static Vector2 SphericalUv(Vector3 direction)
+        {
+            Vector3 n = direction.normalized;
+            float u = Mathf.Atan2(n.z, n.x) / (Mathf.PI * 2f) + 0.5f;
+            float v = n.y * 0.5f + 0.5f;
+            return new Vector2(u * 2f, v * 2f);
         }
 
         /// <summary>
@@ -396,14 +443,19 @@ namespace RiftRally.Scenery
                 verts[i] = new Vector3(cos * radius, 0f, sin * radius);
                 verts[i + sides] = new Vector3(cos * radius * topScale, height,
                                                sin * radius * topScale);
+
+                // Wrapped round the trunk and running up it, so bark reads as bark. The
+                // vertical coordinate is the height in mesh units rather than 0..1, which
+                // keeps the grain the same size whatever length of trunk this becomes.
+                uvs[i] = new Vector2(i / (float)sides, 0f);
+                uvs[i + sides] = new Vector2(i / (float)sides, height);
             }
 
             // A top cap, so a trunk is not hollow when a player leans over the table and
             // looks down the length of it. The base sits in the ground and needs none.
             int topCentre = sides * 2;
             verts[topCentre] = new Vector3(0f, height, 0f);
-
-            for (int i = 0; i < verts.Length; i++) uvs[i] = new Vector2(0.5f, 0.5f);
+            uvs[topCentre] = new Vector2(0.5f, height);
 
             int t = 0;
             for (int i = 0; i < sides; i++)
@@ -426,44 +478,15 @@ namespace RiftRally.Scenery
         }
 
         /// <summary>
-        /// A soft tiling ripple pattern for water.
+        /// A soft tiling ripple pattern for water, now baked by
+        /// <see cref="NatureTextures.Ripples"/> at the current texture budget instead of at a
+        /// fixed sixty-four pixels, and cached rather than regenerated per build.
         ///
-        /// Generated rather than authored, like everything else here, and deliberately low
-        /// contrast: the job is to break up a flat plane just enough that scrolling it reads
-        /// as movement. Every term is a whole number of cycles across the tile, which is what
-        /// makes it seamless at the edges.
+        /// The pattern itself is unchanged - low contrast sine terms at whole numbers of
+        /// cycles, so it tiles seamlessly, with the job of breaking up a flat plane just
+        /// enough that scrolling it reads as movement.
         /// </summary>
-        public static Texture2D MakeRippleTexture(int size = 64)
-        {
-            size = Mathf.Clamp(size, 16, 256);
-
-            var texture = new Texture2D(size, size, TextureFormat.RGBA32, true)
-            {
-                name = "RR_Ripple",
-                wrapMode = TextureWrapMode.Repeat,
-                filterMode = FilterMode.Bilinear
-            };
-
-            var pixels = new Color[size * size];
-            for (int y = 0; y < size; y++)
-            {
-                for (int x = 0; x < size; x++)
-                {
-                    float u = x / (float)size, v = y / (float)size;
-
-                    float wave = Mathf.Sin((u * 4f + v * 2f) * Mathf.PI * 2f) * 0.5f
-                               + Mathf.Sin((u * 2f - v * 5f) * Mathf.PI * 2f) * 0.3f
-                               + Mathf.Sin((u * 7f + v * 6f) * Mathf.PI * 2f) * 0.2f;
-
-                    float shade = 0.86f + wave * 0.14f;
-                    pixels[y * size + x] = new Color(shade, shade, shade, 1f);
-                }
-            }
-
-            texture.SetPixels(pixels);
-            texture.Apply(true, false);
-            return texture;
-        }
+        public static Texture2D MakeRippleTexture() => NatureTextures.Ripples();
 
         /// <summary>
         /// A quad in the local XY plane, centred on its own origin. Clouds, wings and petals

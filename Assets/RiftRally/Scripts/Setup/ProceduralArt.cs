@@ -248,6 +248,79 @@ namespace RiftRally.Setup
         }
 
         /// <summary>
+        /// A lit material wearing a texture, optionally with a normal map.
+        ///
+        /// The tint multiplies the texture rather than replacing it, which is what lets one
+        /// baked greyscale surface - bark, leaf mass, rock - serve every biome in the
+        /// catalogue at its own colour. Eight biomes sharing four textures is four bakes
+        /// instead of thirty-two, and the tint is what makes spruce bark and palm bark
+        /// different things.
+        /// </summary>
+        public static Material MakeTexturedMaterial(Texture albedo, Color tint,
+                                                    Texture normal = null,
+                                                    float normalScale = 1f,
+                                                    float smoothness = 0.1f,
+                                                    Vector2 tiling = default)
+        {
+            var mat = MakeMaterial(tint, 0f, smoothness);
+            mat.name = $"RR_Tex_{tint}";
+
+            if (albedo != null)
+            {
+                if (mat.HasProperty("_BaseMap")) mat.SetTexture("_BaseMap", albedo);
+                if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", albedo);
+            }
+
+            if (tiling != default)
+            {
+                if (mat.HasProperty("_BaseMap")) mat.SetTextureScale("_BaseMap", tiling);
+                if (mat.HasProperty("_MainTex")) mat.SetTextureScale("_MainTex", tiling);
+            }
+
+            if (normal != null && mat.HasProperty("_BumpMap"))
+            {
+                // The keyword is not optional. URP compiles the normal-map sample out of the
+                // shader unless _NORMALMAP is on, so a material with a bump map assigned and
+                // no keyword renders exactly as if the map were not there - silently.
+                mat.SetTexture("_BumpMap", normal);
+                mat.SetFloat("_BumpScale", normalScale);
+                mat.EnableKeyword("_NORMALMAP");
+            }
+
+            return mat;
+        }
+
+        /// <summary>
+        /// A material that clips its own transparent texels away rather than blending them.
+        ///
+        /// This is how a flat quad becomes a clump of grass. Alpha clipping is the right
+        /// choice over blending for foliage for two reasons that both matter in VR: a clipped
+        /// surface still writes depth, so a thousand tufts cannot sort incorrectly against
+        /// each other as the head moves, and it needs no back-to-front ordering, which at this
+        /// object count would cost more CPU than the grass costs GPU.
+        /// </summary>
+        public static Material MakeCutoutMaterial(Texture albedo, Color tint,
+                                                  float cutoff = 0.45f,
+                                                  bool doubleSided = true)
+        {
+            var mat = MakeTexturedMaterial(albedo, tint);
+            mat.name = $"RR_Cutout_{tint}";
+
+            if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 0f);   // still opaque
+            if (mat.HasProperty("_AlphaClip")) mat.SetFloat("_AlphaClip", 1f);
+            if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", cutoff);
+            if (doubleSided && mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
+
+            mat.EnableKeyword("_ALPHATEST_ON");
+            mat.DisableKeyword("_SURFACE_TYPE_TRANSPARENT");
+
+            // AlphaTest, not Transparent: clipped geometry belongs in the opaque pass, after
+            // the solid surfaces so it gets the depth rejection, before anything blended.
+            mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
+            return mat;
+        }
+
+        /// <summary>
         /// Switches a URP Lit material to a blended surface. The float properties and
         /// keywords have to be set together: URP reads the keywords at render time but the
         /// floats are what survive a material being saved or inspected.

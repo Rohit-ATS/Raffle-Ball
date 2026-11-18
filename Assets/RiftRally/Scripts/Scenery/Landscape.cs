@@ -117,6 +117,25 @@ namespace RiftRally.Scenery
         public int GrassCount = 160;
         public Color GrassColor = new Color(0.30f, 0.46f, 0.22f);
 
+        // ---- undergrowth ----
+        // The layer between the grass at your feet and the trees on the hill. A landscape
+        // without it has a readable silhouette and still looks like a diagram: real ground is
+        // never trees standing in a lawn, it is scrub, and the scrub is what fills the gap
+        // between the two scales the eye can already see.
+
+        /// <summary>Low shrubs scattered through the middle distance.</summary>
+        public int BushCount = 40;
+
+        /// <summary>Flowering ground cover. Zero in the biomes where nothing blooms.</summary>
+        public int FlowerCount = 0;
+        public Color FlowerColor = new Color(0.92f, 0.86f, 0.52f);
+
+        /// <summary>Reeds standing in the shallows. Ignored unless the biome has water.</summary>
+        public int ReedCount = 0;
+
+        /// <summary>Fallen trunks lying on the ground. A few go a long way.</summary>
+        public int LogCount = 4;
+
         // ---- water ----
         public bool HasWater = false;
 

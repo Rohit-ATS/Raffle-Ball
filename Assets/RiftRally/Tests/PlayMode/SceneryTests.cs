@@ -27,6 +27,14 @@ namespace RiftRally.Tests
         {
             LandscapeRotation.Forget();
 
+            // Build at the smallest texture budget there is. These tests build a dozen
+            // landscapes between them and none of them looks at a texel; at the shipping
+            // budget that would be a dozen 4096 bakes and well over a gigabyte of textures
+            // held briefly at once, which is a test suite that fails for reasons that have
+            // nothing to do with the code under test.
+            NatureTextures.Budget = NatureTextures.Economy;
+            LandscapeBuilder.TerrainResolution = 48;
+
             // The sky and the weather station themselves on the main camera, so there has to
             // be one for a build to be representative.
             var camGo = new GameObject("TestCamera") { tag = "MainCamera" };
@@ -43,7 +51,62 @@ namespace RiftRally.Tests
             if (_host != null) Object.DestroyImmediate(_host);
             if (_camera != null) Object.DestroyImmediate(_camera.gameObject);
             LandscapeRotation.Forget();
+            NatureTextures.Flush();
+            LandscapeBuilder.TerrainResolution = 144;
             Theme.Reset();
+        }
+
+        [UnityTest]
+        public IEnumerator TheUndergrowthIsBuiltForTheBiomesThatHaveIt()
+        {
+            // Blossom Valley is the biome with the most of everything in this layer, and the
+            // layer is the one that is easiest to lose: it is built from four separate passes
+            // tacked onto the end of the planting, so a mistake in any one of them takes its
+            // own pass out silently while the rest of the world still builds.
+            Landscape landscape = LandscapeCatalog.ByName("Blossom Valley");
+            Assert.That(landscape.BushCount, Is.GreaterThan(0));
+            Assert.That(landscape.FlowerCount, Is.GreaterThan(0));
+
+            LandscapeBuilder.Built built = LandscapeBuilder.Build(_host.transform, landscape, 7);
+            yield return null;
+
+            Transform planting = built.Root.Find("Planting");
+            Assert.That(planting, Is.Not.Null);
+
+            Assert.That(planting.Find("Bushes"), Is.Not.Null,
+                "scrub between the grass and the trees is most of what stops a landscape "
+                + "reading as trees standing in a lawn");
+            Assert.That(planting.Find("Flowers"), Is.Not.Null);
+            Assert.That(planting.Find("Logs"), Is.Not.Null);
+            Assert.That(planting.Find("Reeds"), Is.Not.Null,
+                "a water biome with reeds in its catalogue entry should grow them, and they "
+                + "are placed by searching for the waterline rather than by a fixed radius");
+        }
+
+        [UnityTest]
+        public IEnumerator TheGroundWearsTheBakedSurfaceAndItsNormalMap()
+        {
+            Landscape landscape = LandscapeCatalog.ByName("Alpine Dawn");
+            LandscapeBuilder.Built built = LandscapeBuilder.Build(_host.transform, landscape, 11);
+            yield return null;
+
+            var renderer = built.Root.Find("Ground").GetComponent<MeshRenderer>();
+            Material material = renderer.sharedMaterial;
+
+            Assert.That(material.GetTexture("_BaseMap"), Is.Not.Null,
+                "the ground is the one surface in the world that has to carry detail");
+            Assert.That(material.GetTexture("_BumpMap"), Is.Not.Null);
+
+            // The keyword, not just the texture. URP compiles the normal-map sample out
+            // entirely without it, so a material with a bump map and no keyword renders
+            // exactly as though the map had never been assigned.
+            Assert.That(material.IsKeywordEnabled("_NORMALMAP"), Is.True,
+                "a bump map with no _NORMALMAP keyword is a bump map that does nothing");
+
+            Mesh mesh = built.Root.Find("Ground").GetComponent<MeshFilter>().sharedMesh;
+            Assert.That(mesh.tangents.Length, Is.EqualTo(mesh.vertexCount),
+                "a normal map sampled against an undefined tangent frame lights the ground "
+                + "from a direction that has nothing to do with the sun");
         }
 
         [UnityTest]

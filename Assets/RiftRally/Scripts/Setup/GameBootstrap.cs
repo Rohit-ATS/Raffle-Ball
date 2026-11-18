@@ -133,7 +133,10 @@ namespace RiftRally.Setup
 
                 Scenery = sceneryGo.AddComponent<LandscapeDirector>();
                 Scenery.SetHost(sceneryGo.transform);
-                Scenery.Density = LandscapeBuilder.DensityFor(Quality);
+
+                // Density, terrain resolution and the texture budget, all before the first
+                // build, so the opening landscape is baked once at the right resolution.
+                Scenery.ConfigureQuality(Quality);
 
                 // Launching is a new game, so it moves the rotation on. A player who put the
                 // headset down in the desert comes back to somewhere else.
