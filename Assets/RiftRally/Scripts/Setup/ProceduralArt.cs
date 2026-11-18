@@ -291,36 +291,6 @@ namespace RiftRally.Setup
         }
 
         /// <summary>
-        /// A material that clips its own transparent texels away rather than blending them.
-        ///
-        /// This is how a flat quad becomes a clump of grass. Alpha clipping is the right
-        /// choice over blending for foliage for two reasons that both matter in VR: a clipped
-        /// surface still writes depth, so a thousand tufts cannot sort incorrectly against
-        /// each other as the head moves, and it needs no back-to-front ordering, which at this
-        /// object count would cost more CPU than the grass costs GPU.
-        /// </summary>
-        public static Material MakeCutoutMaterial(Texture albedo, Color tint,
-                                                  float cutoff = 0.45f,
-                                                  bool doubleSided = true)
-        {
-            var mat = MakeTexturedMaterial(albedo, tint);
-            mat.name = $"RR_Cutout_{tint}";
-
-            if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 0f);   // still opaque
-            if (mat.HasProperty("_AlphaClip")) mat.SetFloat("_AlphaClip", 1f);
-            if (mat.HasProperty("_Cutoff")) mat.SetFloat("_Cutoff", cutoff);
-            if (doubleSided && mat.HasProperty("_Cull")) mat.SetFloat("_Cull", 0f);
-
-            mat.EnableKeyword("_ALPHATEST_ON");
-            mat.DisableKeyword("_SURFACE_TYPE_TRANSPARENT");
-
-            // AlphaTest, not Transparent: clipped geometry belongs in the opaque pass, after
-            // the solid surfaces so it gets the depth rejection, before anything blended.
-            mat.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
-            return mat;
-        }
-
-        /// <summary>
         /// Switches a URP Lit material to a blended surface. The float properties and
         /// keywords have to be set together: URP reads the keywords at render time but the
         /// floats are what survive a material being saved or inspected.

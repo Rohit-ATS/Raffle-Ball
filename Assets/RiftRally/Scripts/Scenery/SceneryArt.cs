@@ -503,21 +503,140 @@ namespace RiftRally.Scenery
         {
             float hw = width * 0.5f, hh = height * 0.5f;
 
-            var mesh = new Mesh { name = "RR_Quad" };
-            mesh.SetVertices(new[]
+            var corners = new[]
             {
                 new Vector3(-hw, -hh, 0f), new Vector3(hw, -hh, 0f),
                 new Vector3(-hw,  hh, 0f), new Vector3(hw,  hh, 0f)
-            });
-            mesh.SetUVs(0, new[]
+            };
+            var coords = new[]
             {
                 new Vector2(0f, 0f), new Vector2(1f, 0f),
                 new Vector2(0f, 1f), new Vector2(1f, 1f)
+            };
+
+            var mesh = new Mesh { name = "RR_Quad" };
+
+            if (!doubleSided)
+            {
+                mesh.SetVertices(corners);
+                mesh.SetUVs(0, coords);
+                mesh.SetTriangles(new[] { 0, 2, 1, 2, 3, 1 }, 0);
+                mesh.SetNormals(new[] { -Vector3.forward, -Vector3.forward,
+                                        -Vector3.forward, -Vector3.forward });
+                mesh.RecalculateBounds();
+                return mesh;
+            }
+
+            // A two-sided quad gets two sets of vertices rather than one set wound twice,
+            // and its normals are written rather than calculated.
+            //
+            // This is not a refinement. RecalculateNormals averages the face normals meeting
+            // at each vertex, and the two faces of a quad wound both ways point exactly
+            // opposite each other - so every normal averages to zero, and a lit surface with
+            // a zero normal takes no light at all. Every tuft of grass, every flower, every
+            // reed and both wings of every bird in the game rendered as a solid black card,
+            // in all eight biomes, and the black cards read as holes punched in the
+            // landscape. Eight vertices is what fixes it.
+            mesh.SetVertices(new[]
+            {
+                corners[0], corners[1], corners[2], corners[3],
+                corners[0], corners[1], corners[2], corners[3]
             });
-            mesh.SetTriangles(doubleSided
-                ? new[] { 0, 2, 1, 2, 3, 1, 1, 2, 0, 1, 3, 2 }
-                : new[] { 0, 2, 1, 2, 3, 1 }, 0);
-            mesh.RecalculateNormals();
+            mesh.SetUVs(0, new[]
+            {
+                coords[0], coords[1], coords[2], coords[3],
+                coords[0], coords[1], coords[2], coords[3]
+            });
+            mesh.SetNormals(new[]
+            {
+                -Vector3.forward, -Vector3.forward, -Vector3.forward, -Vector3.forward,
+                Vector3.forward, Vector3.forward, Vector3.forward, Vector3.forward
+            });
+            mesh.SetTriangles(new[]
+            {
+                0, 2, 1, 2, 3, 1,          // front
+                5, 6, 4, 5, 7, 6           // back, wound the other way
+            }, 0);
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// A clump of grass: several tapered blades standing from a common root, each one
+        /// leaning a different way, as real geometry rather than as a texture on a card.
+        ///
+        /// Ground cover is the one thing in the landscape where the shape has to come from
+        /// the mesh. The obvious alternative - a couple of crossed quads wearing a blade
+        /// texture with an alpha cutout - is cheaper, and it is what this used to be, and it
+        /// failed in the one place that matters: the player. URP strips shader variants it
+        /// believes nothing uses, every material in this game is created at run time so
+        /// nothing in the project declares that it needs alpha clipping, and the variant went
+        /// with the strip. In the Editor the grass was grass; in the build it was several
+        /// hundred solid rectangles standing in a field. Geometry cannot be stripped.
+        ///
+        /// A tuft is a unit shape: one metre tall, standing on its own origin, so localScale
+        /// reads as a size the same way the rest of the scenery does.
+        /// </summary>
+        /// <param name="blades">How many blades. Five reads as a clump; three as weeds.</param>
+        /// <param name="spread">How far the tips lean out, as a fraction of the height.</param>
+        public static Mesh BuildGrassTuft(int seed, int blades = 5, float spread = 0.36f,
+                                          float width = 0.13f)
+        {
+            blades = Mathf.Clamp(blades, 1, 12);
+            var random = new System.Random(seed);
+
+            var verts = new System.Collections.Generic.List<Vector3>(blades * 6);
+            var normals = new System.Collections.Generic.List<Vector3>(blades * 6);
+            var uvs = new System.Collections.Generic.List<Vector2>(blades * 6);
+            var tris = new System.Collections.Generic.List<int>(blades * 6);
+
+            for (int b = 0; b < blades; b++)
+            {
+                // Blades fan out around the root rather than all leaning the same way, which
+                // is the difference between a clump of grass and a handful of flat cards.
+                float yaw = (b / (float)blades + (float)random.NextDouble() * 0.12f)
+                            * Mathf.PI * 2f;
+                Vector3 out3 = new Vector3(Mathf.Cos(yaw), 0f, Mathf.Sin(yaw));
+                Vector3 side = new Vector3(-out3.z, 0f, out3.x);
+
+                float height = 0.62f + (float)random.NextDouble() * 0.48f;
+                float lean = spread * (0.4f + (float)random.NextDouble() * 1.1f);
+                float halfWidth = width * (0.7f + (float)random.NextDouble() * 0.6f) * 0.5f;
+
+                Vector3 root = out3 * (halfWidth * 0.7f);
+                Vector3 left = root - side * halfWidth;
+                Vector3 right = root + side * halfWidth;
+                Vector3 tip = root + out3 * lean + Vector3.up * height;
+
+                // The blade's own normal: across the blade, up its length.
+                Vector3 normal = Vector3.Cross(tip - left, right - left).normalized;
+                if (normal.sqrMagnitude < 0.5f) normal = Vector3.up;
+
+                int start = verts.Count;
+
+                // Front face and back face get their own vertices and opposite normals, so a
+                // blade is lit from whichever side it is seen - and never averages to zero.
+                verts.Add(left); verts.Add(right); verts.Add(tip);
+                verts.Add(left); verts.Add(right); verts.Add(tip);
+
+                normals.Add(normal); normals.Add(normal); normals.Add(normal);
+                normals.Add(-normal); normals.Add(-normal); normals.Add(-normal);
+
+                // V runs up the blade, so a material can darken the root and catch the tip.
+                uvs.Add(new Vector2(0f, 0f)); uvs.Add(new Vector2(1f, 0f));
+                uvs.Add(new Vector2(0.5f, 1f));
+                uvs.Add(new Vector2(0f, 0f)); uvs.Add(new Vector2(1f, 0f));
+                uvs.Add(new Vector2(0.5f, 1f));
+
+                tris.Add(start); tris.Add(start + 2); tris.Add(start + 1);
+                tris.Add(start + 4); tris.Add(start + 5); tris.Add(start + 3);
+            }
+
+            var mesh = new Mesh { name = "RR_GrassTuft" };
+            mesh.SetVertices(verts);
+            mesh.SetNormals(normals);
+            mesh.SetUVs(0, uvs);
+            mesh.SetTriangles(tris, 0);
             mesh.RecalculateBounds();
             return mesh;
         }
@@ -528,21 +647,35 @@ namespace RiftRally.Scenery
         /// </summary>
         public static Mesh BuildWing(float span, float chord)
         {
-            var mesh = new Mesh { name = "RR_Wing" };
-            mesh.SetVertices(new[]
+            var points = new[]
             {
                 new Vector3(0f, 0f, chord * 0.5f),
                 new Vector3(span, 0f, chord * 0.18f),
                 new Vector3(0f, 0f, -chord * 0.5f)
+            };
+
+            var mesh = new Mesh { name = "RR_Wing" };
+
+            // Visible from above and below, which a bird has to be - and, like the two-sided
+            // quad, with its own vertices per side. Winding one set of three vertices both
+            // ways is six indices instead of nine, and it also averages both face normals to
+            // zero, which is why the flocks used to fly as black paper cut-outs.
+            mesh.SetVertices(new[]
+            {
+                points[0], points[1], points[2],
+                points[0], points[1], points[2]
             });
             mesh.SetUVs(0, new[]
             {
-                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f)
+                new Vector2(0f, 0.5f), new Vector2(1f, 0.5f), new Vector2(0f, 0.5f),
+                new Vector2(0f, 0.5f), new Vector2(1f, 0.5f), new Vector2(0f, 0.5f)
             });
-            // Both windings, so a wing is visible from above and below without a two-sided
-            // material. Six indices for three vertices is cheaper than doubling the mesh.
-            mesh.SetTriangles(new[] { 0, 1, 2, 2, 1, 0 }, 0);
-            mesh.RecalculateNormals();
+            mesh.SetNormals(new[]
+            {
+                Vector3.up, Vector3.up, Vector3.up,
+                Vector3.down, Vector3.down, Vector3.down
+            });
+            mesh.SetTriangles(new[] { 0, 1, 2, 5, 4, 3 }, 0);
             mesh.RecalculateBounds();
             return mesh;
         }

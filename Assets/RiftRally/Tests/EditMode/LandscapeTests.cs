@@ -335,6 +335,70 @@ namespace RiftRally.Tests
         }
 
         [Test]
+        public void NoGeneratedMeshHasADegenerateNormal()
+        {
+            // A lit surface whose normal is the zero vector takes no light from anywhere and
+            // renders solid black. Every piece of ground cover in the game and both wings of
+            // every bird did exactly that, in all eight biomes, for one reason: a mesh wound
+            // both ways shares its vertices between two faces pointing in opposite
+            // directions, and RecalculateNormals averages them to nothing.
+            //
+            // It is a quiet failure - no error, no warning, geometry in the right place, just
+            // black - so it is worth a test that simply asks every mesh builder whether it
+            // produced normals that can be lit.
+            var meshes = new (string name, Mesh mesh)[]
+            {
+                ("quad", SceneryArt.BuildQuad(1f, 1f)),
+                ("double-sided quad", SceneryArt.BuildQuad(1f, 1f, doubleSided: true)),
+                ("wing", SceneryArt.BuildWing(1f, 0.4f)),
+                ("blob", SceneryArt.BuildBlob()),
+                ("cone", SceneryArt.BuildCone(1f, 1f, 8)),
+                ("prism", SceneryArt.BuildPrism(6, 0.5f, 1f)),
+                ("sky dome", SceneryArt.BuildSkyDome(100f, 12, 6)),
+                ("terrain", SceneryArt.BuildTerrain(LandscapeCatalog.At(0), 3, 40f, 16))
+            };
+
+            foreach ((string name, Mesh mesh) in meshes)
+            {
+                Vector3[] normals = mesh.normals;
+                Assert.That(normals.Length, Is.EqualTo(mesh.vertexCount),
+                    $"the {name} has no normals at all");
+
+                foreach (Vector3 normal in normals)
+                {
+                    Assert.That(normal.magnitude, Is.GreaterThan(0.5f),
+                        $"the {name} has a vertex with a zero-length normal, so it will "
+                        + "render black wherever it is lit");
+                }
+
+                Object.DestroyImmediate(mesh);
+            }
+        }
+
+        [Test]
+        public void ATwoSidedQuadIsLitFromBothSides()
+        {
+            // The fix for the black grass is that the two faces get their own vertices. If
+            // that is ever undone to save eight bytes, this fails rather than the game going
+            // quietly black again.
+            Mesh quad = SceneryArt.BuildQuad(1f, 1f, doubleSided: true);
+
+            bool facesForward = false, facesBack = false;
+            foreach (Vector3 normal in quad.normals)
+            {
+                if (normal.z > 0.5f) facesForward = true;
+                if (normal.z < -0.5f) facesBack = true;
+            }
+
+            Assert.That(facesForward && facesBack, Is.True,
+                "a two-sided quad needs a normal pointing each way, which means two sets of "
+                + "vertices rather than one set wound twice");
+
+            Assert.That(quad.triangles.Length / 3, Is.EqualTo(4));
+            Object.DestroyImmediate(quad);
+        }
+
+        [Test]
         public void TheBlobIsCheapAndRoundAndUnitSized()
         {
             Mesh blob = SceneryArt.BuildBlob();

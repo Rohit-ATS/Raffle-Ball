@@ -423,10 +423,12 @@ namespace RiftRally.Scenery
             Material rock = ProceduralArt.MakeTexturedMaterial(
                 stone, landscape.RockColor, null, 1f, 0.12f, new Vector2(1.4f, 1.4f));
 
-            // The one material in the landscape that clips rather than fills. A tuft used to
-            // be two solid rectangles crossed at right angles, which at arm's length reads as
-            // litter; with the blade texture clipped out of it, it reads as grass.
-            Material grass = ProceduralArt.MakeCutoutMaterial(blades, landscape.GrassColor);
+            // Ground cover is lit, opaque and shaped: the blades are geometry, so there is
+            // no transparency to sort and no shader variant that can be stripped out of a
+            // build. It is also the right look - a clump of tapered blades catches the light
+            // along its length, which two crossed cards never did.
+            Material grass = ProceduralArt.MakeTexturedMaterial(
+                blades, landscape.GrassColor, null, 1f, 0.12f, new Vector2(1f, 1f));
 
             var shapes = new PlantShapes
             {
@@ -434,8 +436,18 @@ namespace RiftRally.Scenery
                 Cone = SceneryArt.BuildCone(1f, 1f, 8),
                 Trunk = SceneryArt.BuildPrism(6, 0.5f, 1f),
 
-                // Double-sided: grass tufts and palm fronds are seen from every direction.
-                Quad = SceneryArt.BuildQuad(1f, 1f, doubleSided: true)
+                // Double-sided: palm fronds and petals are seen from every direction.
+                Quad = SceneryArt.BuildQuad(1f, 1f, doubleSided: true),
+
+                // Three clumps, picked from at random per tuft. One mesh for every tuft in
+                // the biome would make a meadow of identical clones; three is enough that
+                // nobody sees the repeat, and they still batch.
+                Tufts = new[]
+                {
+                    SceneryArt.BuildGrassTuft(random.Next() ^ 0x11, 5),
+                    SceneryArt.BuildGrassTuft(random.Next() ^ 0x27, 6, 0.30f, 0.11f),
+                    SceneryArt.BuildGrassTuft(random.Next() ^ 0x3D, 4, 0.44f, 0.16f)
+                }
             };
 
             int planted = 0;
@@ -507,15 +519,10 @@ namespace RiftRally.Scenery
                 tuft.localPosition = new Vector3(spot.x, y, spot.y);
                 tuft.localRotation = Quaternion.Euler(0f, random.Next(0, 360), 0f);
 
-                // Two crossed quads: a cross section reads as a clump from every angle, and
-                // it is four triangles.
-                for (int blade = 0; blade < 2; blade++)
-                {
-                    SceneryArt.Attach(tuft, $"Blade_{blade}", shapes.Quad, grass,
-                        new Vector3(0f, height * 0.5f, 0f),
-                        Quaternion.Euler(0f, blade * 90f, 0f),
-                        new Vector3(height * 0.8f, height, 1f));
-                }
+                SceneryArt.Attach(tuft, "Blades",
+                    shapes.Tufts[random.Next(shapes.Tufts.Length)], grass,
+                    Vector3.zero, Quaternion.identity,
+                    new Vector3(height, height, height));
 
                 var sway = tuft.gameObject.AddComponent<Sway>();
                 sway.Amplitude = 5.5f;
@@ -617,8 +624,11 @@ namespace RiftRally.Scenery
             int count = Mathf.RoundToInt(landscape.FlowerCount * density);
             if (count <= 0) return 0;
 
-            Material material = ProceduralArt.MakeCutoutMaterial(blades, landscape.FlowerColor,
-                                                                 0.4f);
+            // Lifted a little towards white: a bloom catches more light than the leaf it
+            // grows from, and at this size the colour is the whole of the effect.
+            Material material = ProceduralArt.MakeTexturedMaterial(
+                blades, Color.Lerp(landscape.FlowerColor, Color.white, 0.15f),
+                null, 1f, 0.2f, new Vector2(1f, 1f));
             material.name = "RR_Flowers";
 
             var flowers = new GameObject("Flowers").transform;
@@ -639,9 +649,10 @@ namespace RiftRally.Scenery
                 clump.localPosition = new Vector3(spot.x, y, spot.y);
                 clump.localRotation = Quaternion.Euler(0f, random.Next(0, 360), 0f);
 
-                SceneryArt.Attach(clump, "Petals", shapes.Quad, material,
-                    new Vector3(0f, height * 0.5f, 0f), Quaternion.identity,
-                    new Vector3(height * 1.1f, height, 1f));
+                SceneryArt.Attach(clump, "Petals",
+                    shapes.Tufts[random.Next(shapes.Tufts.Length)], material,
+                    Vector3.zero, Quaternion.identity,
+                    new Vector3(height * 1.15f, height, height * 1.15f));
 
                 var sway = clump.gameObject.AddComponent<Sway>();
                 sway.Amplitude = 7f;
@@ -673,7 +684,8 @@ namespace RiftRally.Scenery
 
             Color tint = Color.Lerp(landscape.GrassColor, landscape.FoliageFar, 0.45f) * 0.9f;
             tint.a = 1f;
-            Material material = ProceduralArt.MakeCutoutMaterial(blades, tint, 0.42f);
+            Material material = ProceduralArt.MakeTexturedMaterial(
+                blades, tint, null, 1f, 0.16f, new Vector2(1f, 1f));
             material.name = "RR_Reeds";
 
             var reeds = new GameObject("Reeds").transform;
@@ -702,13 +714,12 @@ namespace RiftRally.Scenery
                     clump.localPosition = new Vector3(spot.x, y, spot.y);
                     clump.localRotation = Quaternion.Euler(0f, random.Next(0, 360), 0f);
 
-                    for (int blade = 0; blade < 2; blade++)
-                    {
-                        SceneryArt.Attach(clump, $"Blade_{blade}", shapes.Quad, material,
-                            new Vector3(0f, height * 0.5f, 0f),
-                            Quaternion.Euler(0f, blade * 90f, 0f),
-                            new Vector3(height * 0.3f, height, 1f));
-                    }
+                    // Narrow and tall: a reed bed is vertical lines, so the clump is
+                    // squeezed in plan and stretched in height.
+                    SceneryArt.Attach(clump, "Blades",
+                        shapes.Tufts[random.Next(shapes.Tufts.Length)], material,
+                        Vector3.zero, Quaternion.identity,
+                        new Vector3(height * 0.34f, height, height * 0.34f));
 
                     var sway = clump.gameObject.AddComponent<Sway>();
                     sway.Amplitude = 4.5f;
@@ -774,6 +785,10 @@ namespace RiftRally.Scenery
             public Mesh Cone;
             public Mesh Trunk;
             public Mesh Quad;
+
+            /// <summary>Clumps of real blades, in a few shapes so a field is not one shape
+            /// repeated. Ground cover, flowering cover and reeds all draw from these.</summary>
+            public Mesh[] Tufts;
         }
 
         private static Transform BuildTree(Transform parent, TreeKind kind, string name,
@@ -1113,7 +1128,11 @@ namespace RiftRally.Scenery
                 // usually something in the air whichever way the player happens to look.
                 float angle = (i / (float)count) * Mathf.PI * 2f
                               + (float)random.NextDouble() * 0.8f;
-                float radius = 10f + (float)random.NextDouble() * 18f;
+                // Far enough out to be scenery. At the ten metres this used to start at, a
+                // one-metre bird is six degrees wide and crosses the view in a second: it
+                // reads as something flying at your head rather than as life in the
+                // distance, and in a trailer frame it is a black card in the sky.
+                float radius = 18f + (float)random.NextDouble() * 24f;
                 var centre = new Vector3(Mathf.Cos(angle) * radius, 0f,
                                          Mathf.Sin(angle) * radius);
 

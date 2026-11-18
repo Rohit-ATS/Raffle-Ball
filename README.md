@@ -12,6 +12,38 @@ multiplayer service on Render. No controllers: the whole game is pinch, pull, re
 
 ---
 
+## The trailer, the build, and how to judge it fast
+
+- **Trailer** — `Media/RiftRally_Trailer.mp4`, 81 seconds, 1080p60, no voice-over.
+- **Quest build** — `Build/Quest/RiftRally.apk` (48 MB, `com.metavrhackathon.riftrally`).
+  `adb install -r Build/Quest/RiftRally.apk`, hand tracking on, developer mode enabled.
+- **No headset?** `Build/Windows/RiftRally.exe` plays with mouse and keyboard.
+- **Submission write-up** — [SUBMISSION.md](SUBMISSION.md); final checks in
+  [docs/SUBMISSION_CHECKLIST.md](docs/SUBMISSION_CHECKLIST.md).
+
+**The trailer is rendered by the game, not recorded from it.** The shot list is a script in
+the project ([TrailerDirector.cs](Assets/RiftRally/Scripts/Trailer/TrailerDirector.cs)): the
+player is launched with `-trailer`, every camera move and every throw is driven through the
+game's own systems - the hand in the throw shot is a simulated hand the real input path reads
+- and each frame is written to disk before the next is simulated. `Time.captureDeltaTime`
+decouples game time from wall-clock time, so a frame that takes eighty milliseconds to render
+and encode still advances the world by one sixtieth of a second: a perfectly smooth 60 fps
+film of a game that was never running at 60 fps on that machine, with true slow motion where
+the shot asks for it.
+
+The music is synthesised by [compose_music.py](Tools/Trailer/compose_music.py) - oscillators,
+filters, an FFT convolution reverb - and the cut, titles and grade are assembled by
+[assemble_trailer.py](Tools/Trailer/assemble_trailer.py). Nothing in the trailer is licensed
+from anywhere, which is the same rule the game itself follows.
+
+```bash
+Build/Windows/RiftRally.exe -trailer -trailerOut frames -trailerWidth 1920 -trailerFps 60
+python Tools/Trailer/compose_music.py --out trailer_music.wav --length 81
+python Tools/Trailer/assemble_trailer.py --frames frames --music trailer_music.wav        --out Media/RiftRally_Trailer.mp4
+```
+
+---
+
 ## How it plays
 
 | | |

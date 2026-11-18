@@ -93,7 +93,7 @@ namespace RiftRally.Scenery
 
             if (random.Next(2) == 0) flock.Speed = -flock.Speed;
 
-            flock.Altitude = landscape.BirdHeight * (0.75f + (float)random.NextDouble() * 0.5f);
+            flock.Altitude = landscape.BirdHeight * (0.95f + (float)random.NextDouble() * 0.5f);
             flock.BuildBirds(landscape, random);
             return flock;
         }
@@ -105,7 +105,11 @@ namespace RiftRally.Scenery
 
             // One material and one mesh of each kind for the whole flock, so every bird in it
             // batches together.
-            Material feather = Setup.ProceduralArt.MakeMaterial(landscape.BirdColor, 0f, 0.1f);
+            // Washed a little towards the horizon colour. A bird thirty metres off is seen
+            // through thirty metres of air, so a pure dark silhouette reads as a hole cut in
+            // the sky rather than as a bird - which is exactly how the first flocks looked.
+            Color plumage = Color.Lerp(landscape.BirdColor, landscape.SkyHorizon, 0.3f);
+            Material feather = Setup.ProceduralArt.MakeMaterial(plumage, 0f, 0.1f);
             Mesh wingMesh = SceneryArt.BuildWing(1f, 0.42f);
             Mesh bodyMesh = SceneryArt.BuildWing(1f, 0.30f);
 

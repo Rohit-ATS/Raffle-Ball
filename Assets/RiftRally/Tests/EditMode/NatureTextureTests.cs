@@ -255,46 +255,64 @@ namespace RiftRally.Tests
         // ---------------------------------------------------------------- surfaces
 
         [Test]
-        public void TheGrassCutoutHasBothBladesAndGapsBetweenThem()
+        public void TheBladeTextureIsDarkAtTheRootAndBrightAtTheTip()
         {
+            // The blade texture shades real blade geometry now rather than cutting a shape
+            // out of a card, so what matters is the gradient along it: dark where the clump
+            // shadows itself, bright where the tip catches the light. That gradient is free
+            // ambient occlusion on a piece of geometry too small to justify any other kind.
             Texture2D blades = NatureTextures.Blades();
 
-            int clear = 0, solid = 0, total = 0;
-            for (int y = 0; y < blades.height; y += 4)
+            float Row(int y)
             {
-                for (int x = 0; x < blades.width; x += 4)
-                {
-                    float alpha = blades.GetPixel(x, y).a;
-                    if (alpha < 0.2f) clear++;
-                    else if (alpha > 0.8f) solid++;
-                    total++;
-                }
+                float sum = 0f;
+                for (int x = 0; x < blades.width; x += 4) sum += Luminance(blades.GetPixel(x, y));
+                return sum / (blades.width / 4);
             }
 
-            // A cutout with no gaps is a rectangle, and a tuft made of rectangles is what the
-            // ground cover used to look like. A cutout with no solid texels is invisible.
-            Assert.That(clear / (float)total, Is.GreaterThan(0.25f),
-                "no daylight between the blades: this is a painted rectangle again");
-            Assert.That(solid / (float)total, Is.GreaterThan(0.02f),
-                "no solid blades: the grass will clip away to nothing");
+            float root = Row((int)(blades.height * 0.1f));
+            float tip = Row((int)(blades.height * 0.85f));
+
+            Assert.That(tip, Is.GreaterThan(root * 1.15f),
+                "a blade with no gradient along it is a flat green stick");
         }
 
         [Test]
-        public void TheGrassCutoutIsThickerAtTheRootThanAtTheTip()
+        public void AGrassTuftIsLitGeometryRatherThanATexturedCard()
         {
-            Texture2D blades = NatureTextures.Blades();
+            // This is the shape that replaced the alpha-cutout quads, and the reason is in
+            // the test name: in a player, URP had stripped the alpha-test variant - nothing
+            // in the project declares it, because every material here is made at run time -
+            // and several hundred tufts per biome drew as solid rectangles. Geometry cannot
+            // be stripped.
+            Mesh tuft = SceneryArt.BuildGrassTuft(seed: 11, blades: 5);
 
-            float Coverage(int row)
+            Assert.That(tuft.vertexCount, Is.EqualTo(5 * 6),
+                "five blades, each with its own vertices front and back");
+            Assert.That(tuft.triangles.Length / 3, Is.EqualTo(10));
+
+            foreach (Vector3 normal in tuft.normals)
             {
-                float sum = 0f;
-                for (int x = 0; x < blades.width; x++) sum += blades.GetPixel(x, row).a;
-                return sum / blades.width;
+                Assert.That(normal.magnitude, Is.GreaterThan(0.5f),
+                    "a blade with a zero normal renders black, which is the bug this shape "
+                    + "exists to end");
             }
 
-            // Grass tapers. Quite apart from looking right, the taper is what hides the hard
-            // top edge of the quad the texture is drawn on.
-            Assert.That(Coverage((int)(blades.height * 0.1f)),
-                Is.GreaterThan(Coverage((int)(blades.height * 0.9f))));
+            // Standing on its own origin and a unit tall, so localScale reads as a size.
+            Bounds bounds = tuft.bounds;
+            Assert.That(bounds.min.y, Is.EqualTo(0f).Within(0.02f));
+            Assert.That(bounds.max.y, Is.InRange(0.5f, 1.3f));
+
+            // Blades lean different ways: a tuft whose blades all point one way is a card
+            // again, just a more expensive one.
+            bool leansSeveralWays = false;
+            foreach (Vector3 vertex in tuft.vertices)
+            {
+                if (vertex.y > 0.4f && vertex.x < -0.03f) leansSeveralWays = true;
+            }
+
+            Assert.That(leansSeveralWays, Is.True);
+            Object.DestroyImmediate(tuft);
         }
 
         [Test]

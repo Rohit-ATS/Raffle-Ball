@@ -138,6 +138,27 @@ namespace RiftRally.Setup
         }
 
         /// <summary>
+        /// Places the head directly, in world space.
+        ///
+        /// The simulator owns the camera pose - it reapplies it every LateUpdate, because an
+        /// XR rig keeps reasserting its own offset even with no headset connected - so
+        /// anything that wants to move the view has to go through here rather than setting
+        /// the camera transform and watching it be silently undone. The trailer camera is
+        /// the caller this exists for.
+        /// </summary>
+        public void SetHeadPose(Vector3 position, Quaternion rotation)
+        {
+            _headPosition = position;
+            _headRotation = rotation;
+
+            Vector3 euler = rotation.eulerAngles;
+            _yaw = euler.y;
+            _pitch = euler.x > 180f ? euler.x - 360f : euler.x;
+
+            ApplyHeadPose();
+        }
+
+        /// <summary>
         /// Writes the simulated head pose onto the camera.
         ///
         /// Done in LateUpdate as well as on demand, because an XR rig keeps re-applying its
