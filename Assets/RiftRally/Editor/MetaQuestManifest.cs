@@ -13,9 +13,16 @@ namespace RiftRally.EditorTools
     /// twenty-minute IL2CPP build - which is exactly the sort of thing that should be a
     /// property of the build rather than something a person remembers to do:
     ///
-    /// - <c>com.oculus.supportedDevices</c> declares which headsets the app runs on. Without
-    ///   it the store assumes every device ever made, including the original Quest, which has
-    ///   not been supported since 2023 and which this game could not hold 90 Hz on anyway.
+    /// - <c>com.oculus.supportedDevices</c> declares which headsets the app runs on. Unity's
+    ///   own XR manifest library already writes one, and the list it writes begins with
+    ///   <c>quest</c> - the original Quest, discontinued in 2023 - which is what the Horizon
+    ///   upload validator complains about. So this is an override rather than an addition,
+    ///   and it has to say so: two manifests declaring the same meta-data with different
+    ///   values is a merge failure, not a last-one-wins.
+    ///
+    ///   The names are Meta's internal codenames and not the marketing ones: cambria is the
+    ///   Quest Pro and eureka is the Quest 3. Writing "questpro|quest3" produces a manifest
+    ///   that merges cleanly and matches no device at all.
     /// - <c>com.oculus.handtracking.frequency</c> asks for the high-frequency hand tracking
     ///   path. This game is a throwing game read entirely from pinch position and release
     ///   velocity, so the tracking rate is not a nicety - at the low rate the release
@@ -51,8 +58,10 @@ namespace RiftRally.EditorTools
                 return;
             }
 
+            EnsureToolsNamespace(document);
+
             SetMetaData(document, application, "com.oculus.supportedDevices",
-                        "quest2|questpro|quest3");
+                        "quest2|cambria|eureka|quest3s");
             SetMetaData(document, application, "com.oculus.handtracking.frequency", "HIGH");
             SetMetaData(document, application, "com.oculus.handtracking.version", "V2.0");
 
@@ -61,10 +70,30 @@ namespace RiftRally.EditorTools
                       + "hand tracking.");
         }
 
+        private const string ToolsNamespace = "http://schemas.android.com/tools";
+
         /// <summary>
-        /// Adds a meta-data element, or updates it if the build already has one. Updating
-        /// rather than appending matters: a manifest with the same meta-data name twice fails
-        /// to merge, and a second build would otherwise produce one.
+        /// Declares the tools namespace on the manifest root, which has to exist before any
+        /// <c>tools:</c> attribute written below it means anything.
+        /// </summary>
+        private static void EnsureToolsNamespace(XmlDocument document)
+        {
+            var manifest = document.SelectSingleNode("/manifest") as XmlElement;
+            if (manifest == null) return;
+
+            if (string.IsNullOrEmpty(manifest.GetAttribute("xmlns:tools")))
+                manifest.SetAttribute("xmlns:tools", ToolsNamespace);
+        }
+
+        /// <summary>
+        /// Adds a meta-data element, or updates it if this module already has one, and marks
+        /// it as replacing whatever another module declares under the same name.
+        ///
+        /// Both halves are load-bearing. Appending a second element with a name this module
+        /// already has produces a manifest that cannot merge with itself; omitting
+        /// <c>tools:replace</c> produces one that cannot merge with Unity's XR library, which
+        /// declares two of these three already. The failure arrives from Gradle as
+        /// "Attribute ... is also present at ...", at the end of a twenty-minute build.
         /// </summary>
         private static void SetMetaData(XmlDocument document, XmlNode application,
                                         string name, string value)
@@ -85,6 +114,7 @@ namespace RiftRally.EditorTools
                 }
 
                 valueAttribute.Value = value;
+                SetReplaceMarker(document, node);
                 return;
             }
 
@@ -99,7 +129,25 @@ namespace RiftRally.EditorTools
             added.Value = value;
             element.Attributes.Append(added);
 
+            SetReplaceMarker(document, element);
             application.AppendChild(element);
+        }
+        /// <summary>
+        /// Marks an element as overriding the same element from another module, which is how
+        /// the Android manifest merger is told that a conflict is deliberate.
+        /// </summary>
+        private static void SetReplaceMarker(XmlDocument document, XmlNode node)
+        {
+            if (node.Attributes == null) return;
+
+            XmlAttribute replace = node.Attributes["replace", ToolsNamespace];
+            if (replace == null)
+            {
+                replace = document.CreateAttribute("tools", "replace", ToolsNamespace);
+                node.Attributes.Append(replace);
+            }
+
+            replace.Value = "android:value";
         }
     }
 }
