@@ -184,7 +184,15 @@ namespace RiftRally.EditorTools
                                                ScriptingImplementation.IL2CPP);
             PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel32;
-            PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
+            // 34, not "whatever is newest". Auto resolves to the highest SDK the installed
+            // Unity knows about - 36 here - and the Horizon upload validator rejects
+            // anything above 34 outright. The error arrives at the end of the upload, long
+            // after the twenty-minute IL2CPP build it invalidates.
+            PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevel34;
+
+            // Bumped per upload attempt: a release channel refuses a version code it has
+            // already seen, and that is a slow way to discover a one-line problem.
+            PlayerSettings.Android.bundleVersionCode = 2;
 
             PlayerSettings.SetGraphicsAPIs(BuildTarget.Android, new[]
             {
