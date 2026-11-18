@@ -189,14 +189,6 @@ namespace RiftRally.Presentation
         }
 
         private static void SetGlow(Material material, Color color, float alpha, float emission)
-        {
-            if (material == null) return;
-
-            Color c = new Color(color.r, color.g, color.b, Mathf.Clamp01(alpha));
-            if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", c);
-            if (material.HasProperty("_Color")) material.SetColor("_Color", c);
-            if (material.HasProperty("_EmissionColor"))
-                material.SetColor("_EmissionColor", color * (emission * Mathf.Clamp01(alpha)));
-        }
+            => ProceduralArt.SetGlowFade(material, color, alpha, emission);
     }
 }

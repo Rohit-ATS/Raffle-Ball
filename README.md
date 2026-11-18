@@ -69,6 +69,13 @@ frames in VR is not "choppy", it is nauseating.
 3. Press Play. With no headset attached the game falls back to a desktop camera and drives the
    right hand with the mouse — click to pinch — so the whole loop is playable at a desk.
 
+### Windows fallback controls
+
+In a Windows build, press **Enter** to start a solo match. Use **Arrow keys** (or **IJKL**) to
+move the right hand, and hold **Ctrl** to pinch, grab, pull and release. The original mouse
+controls remain available: hold **Space** while moving the mouse to drive the right hand, and
+use left mouse to pinch.
+
 ### On a Quest
 
 ```

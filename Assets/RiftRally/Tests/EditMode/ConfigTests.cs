@@ -95,6 +95,18 @@ namespace RiftRally.Tests
         }
 
         [Test]
+        public void AFullPullStaysOnTheIce()
+        {
+            // The pull happens behind the stone, on the rink. If the launch line sits closer
+            // to the near edge than the longest pull, a hard throw drags the stone off the
+            // open end, where it is counted out of bounds and destroyed on release - so the
+            // harder you threw, the more certainly your stone vanished.
+            Assert.That(GameConfig.LaunchLineFromNearEnd,
+                Is.GreaterThan(GameConfig.MaxPullDistance + GameConfig.StoneRadius),
+                "a full pull must not reach past the near edge of the rink");
+        }
+
+        [Test]
         public void PullDistanceIsWithinArmsReach()
         {
             Assert.That(GameConfig.MaxPullDistance, Is.LessThan(0.6f),

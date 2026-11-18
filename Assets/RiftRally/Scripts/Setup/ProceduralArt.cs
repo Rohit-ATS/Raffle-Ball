@@ -18,9 +18,16 @@ namespace RiftRally.Setup
         /// <summary>
         /// A material matching the project's render pipeline.
         ///
-        /// It is cloned from a throwaway primitive rather than looked up by shader name,
-        /// because <c>Shader.Find</c> only resolves shaders that happened to be pulled into
-        /// the build, whereas the default primitive material always is.
+        /// The shader is looked up by name first, and the primitive's own material is only a
+        /// fallback. It used to be the other way round, which worked perfectly in the Editor
+        /// and shipped a completely invisible rink: <c>CreatePrimitive</c> assigns the
+        /// built-in Standard material, the Editor silently substitutes URP's Lit shader when
+        /// it renders it, and a built player does not - the shader is not in the build at
+        /// all, so every surface drew nothing. Nothing in the logs, nothing in a test; just a
+        /// black headset.
+        ///
+        /// <see cref="RiftRally.EditorTools.RiftRallyBuild"/> adds these shaders to the
+        /// always-included list so the name lookup cannot fail in a player.
         /// </summary>
         private static Material LitTemplate
         {
@@ -28,15 +35,59 @@ namespace RiftRally.Setup
             {
                 if (_litTemplate != null) return _litTemplate;
 
+                Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+                if (shader == null) shader = Shader.Find("Universal Render Pipeline/Simple Lit");
+                if (shader == null) shader = Shader.Find("Universal Render Pipeline/Unlit");
+
+                if (shader != null)
+                {
+                    _litTemplate = new Material(shader) { name = "RR_LitTemplate" };
+                    return _litTemplate;
+                }
+
+                // Last resort: whatever a primitive comes with. Better than a null material,
+                // and loud about it, because this path means the build is misconfigured.
+                Debug.LogError("[RiftRally] URP shaders are missing from this build; " +
+                               "falling back to the primitive default material.");
+
                 var probe = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 var renderer = probe.GetComponent<MeshRenderer>();
                 _litTemplate = renderer != null && renderer.sharedMaterial != null
                     ? new Material(renderer.sharedMaterial)
-                    : new Material(Shader.Find("Universal Render Pipeline/Lit"));
+                    : null;
                 Object.Destroy(probe);
                 return _litTemplate;
             }
         }
+
+        /// <summary>
+        /// Fades an additively blended material.
+        ///
+        /// Alpha does nothing on an additive surface: the blend is <c>src + dst</c>, so the
+        /// shaded colour is added to the frame whatever its alpha says. Fading therefore has
+        /// to scale the colour itself towards black. Getting this wrong is not subtle - every
+        /// halo, trail and highlight in the game sat permanently at full brightness, so the
+        /// hand reach-halos glowed at the player even with nothing to grab.
+        /// </summary>
+        public static void SetGlowFade(Material material, Color rgb, float visibility,
+                                       float emission = 2f)
+        {
+            if (material == null) return;
+
+            float v = Mathf.Clamp01(visibility);
+            Color scaled = new Color(rgb.r * v, rgb.g * v, rgb.b * v, v);
+
+            if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", scaled);
+            if (material.HasProperty("_Color")) material.SetColor("_Color", scaled);
+            if (material.HasProperty("_EmissionColor"))
+                material.SetColor("_EmissionColor", rgb * (emission * v));
+        }
+
+        /// <summary>Logs which shader the art is actually being drawn with.</summary>
+        public static string ShaderReport =>
+            LitTemplate != null && LitTemplate.shader != null
+                ? LitTemplate.shader.name
+                : "<none>";
 
         /// <summary>Creates an opaque material, optionally glowing.</summary>
         public static Material MakeMaterial(Color color, float emission = 0f,
@@ -127,7 +178,9 @@ namespace RiftRally.Setup
             if (!withCollider) Object.Destroy(collider);
 
             var renderer = go.GetComponent<MeshRenderer>();
-            if (renderer != null && material != null) renderer.sharedMaterial = material;
+            // Always replace the primitive's material, never leave the built-in default:
+            // it is not a URP shader and will not render in a player.
+            if (renderer != null) renderer.sharedMaterial = material != null ? material : MakeMaterial(Color.gray);
             return go;
         }
 
@@ -247,7 +300,7 @@ namespace RiftRally.Setup
             if (!withCollider) Object.Destroy(collider);
 
             var renderer = go.GetComponent<MeshRenderer>();
-            if (renderer != null && material != null) renderer.sharedMaterial = material;
+            if (renderer != null) renderer.sharedMaterial = material != null ? material : MakeMaterial(Color.gray);
             return go;
         }
 

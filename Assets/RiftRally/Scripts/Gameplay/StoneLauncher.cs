@@ -312,10 +312,15 @@ namespace RiftRally.Gameplay
             Vector3 anchorLocal = Playfield.Surface.InverseTransformPoint(_anchor);
 
             float halfW = GameConfig.RinkWidth * 0.5f - GameConfig.StoneRadius;
+            float halfL = GameConfig.RinkLength * 0.5f;
             local.x = Mathf.Clamp(local.x, -halfW, halfW);
 
             // Never in front of the anchor: this is a pull-back, not a push.
             local.z = Mathf.Min(local.z, anchorLocal.z);
+
+            // ...and never back past the open near edge. Without this the stone can be
+            // pulled off the end of the rink and is destroyed the moment it is released.
+            local.z = Mathf.Max(local.z, -halfL + GameConfig.StoneRadius);
 
             Vector3 offset = new Vector3(local.x - anchorLocal.x, 0f, local.z - anchorLocal.z);
             if (offset.magnitude > GameConfig.MaxPullDistance)

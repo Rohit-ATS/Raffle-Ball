@@ -39,10 +39,11 @@ namespace RiftRally.Presentation
 
         [Header("Placement")]
         [Tooltip("Height above the rink surface the panel stands at.")]
-        public float PanelHeight = 0.42f;
+        public float PanelHeight = 0.30f;
 
-        [Tooltip("How far beyond the far end of the rink the panel sits.")]
-        public float PanelDistance = 0.12f;
+        [Tooltip("Where along the rink the panel stands, as a fraction of its length from " +
+                 "the centre. Negative is towards the player.")]
+        public float PanelAlongRink = -0.22f;
 
         public Screen Current { get; private set; } = Screen.Home;
 
@@ -83,15 +84,21 @@ namespace RiftRally.Presentation
 
             _root = new GameObject("MenuPanel").transform;
             _root.SetParent(anchor, false);
+            // Over the near third of the rink, not beyond the far end.
+            //
+            // The panel has to be inside arm's reach, because its buttons are pressed by
+            // physically putting a hand into them. Standing it past the house looked tidy and
+            // made the entire lobby impossible to operate: every button was about two metres
+            // from the player, roughly twice as far as anyone can reach.
             _root.localPosition = new Vector3(
-                0f, PanelHeight, GameConfig.RinkLength * 0.5f + PanelDistance);
+                0f, PanelHeight, GameConfig.RinkLength * PanelAlongRink);
 
             // Faces back down the rink towards the player, so the buttons are reachable
             // across the near half of the table rather than at arm's full stretch.
             _root.localRotation = Quaternion.Euler(0f, 180f, 0f);
 
             var backing = ProceduralArt.Box(_root, "Backing", new Vector3(0f, -0.02f, 0.012f),
-                new Vector3(0.44f, 0.40f, 0.008f),
+                new Vector3(0.46f, 0.44f, 0.008f),
                 ProceduralArt.MakeTransparentMaterial(new Color(0.04f, 0.06f, 0.10f, 0.78f)),
                 false);
             backing.name = "Backing";

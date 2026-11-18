@@ -153,10 +153,7 @@ namespace RiftRally.Presentation
 
             Color tint = Interactable ? Tint : Color.Lerp(Tint, Color.gray, 0.7f);
 
-            if (_plateMaterial.HasProperty("_BaseColor"))
-                _plateMaterial.SetColor("_BaseColor", new Color(tint.r, tint.g, tint.b, alpha));
-            if (_plateMaterial.HasProperty("_EmissionColor"))
-                _plateMaterial.SetColor("_EmissionColor", tint * emission);
+            ProceduralArt.SetGlowFade(_plateMaterial, tint, alpha, emission);
 
             if (_label != null)
                 _label.SetColor(Interactable

@@ -104,9 +104,11 @@ namespace RiftRally.Gameplay
 
             // Breathing alpha, so the hint reads as a prompt rather than as a live aim line.
             float breathe = 0.12f + Mathf.Abs(Mathf.Sin(Time.time * 1.8f)) * 0.14f;
-            Color c = new Color(1f, 1f, 1f, breathe);
+            // Scaled towards black rather than towards transparent: the line material is
+            // additive, so alpha alone would leave the hint at full brightness.
+            Color c = new Color(breathe, breathe, breathe, breathe);
             Path.startColor = c;
-            Path.endColor = new Color(1f, 1f, 1f, 0f);
+            Path.endColor = new Color(0f, 0f, 0f, 0f);
             Path.widthMultiplier = 0.005f;
 
             if (PowerPip != null) PowerPip.gameObject.SetActive(false);
@@ -137,9 +139,9 @@ namespace RiftRally.Gameplay
             // Hot at the stone, cooling along the line: the eye follows the gradient out to
             // where the stone will end up.
             Color hot = Color.Lerp(teamColor, Color.white, 0.45f);
-            Path.startColor = new Color(hot.r, hot.g, hot.b,
-                                        Mathf.Lerp(0.40f, 1f, power01) * _shown);
-            Path.endColor = new Color(teamColor.r, teamColor.g, teamColor.b, 0.04f * _shown);
+            float head = Mathf.Lerp(0.40f, 1f, power01) * _shown;
+            Path.startColor = new Color(hot.r * head, hot.g * head, hot.b * head, head);
+            Path.endColor = new Color(0f, 0f, 0f, 0f);
             Path.widthMultiplier = Mathf.Lerp(0.0045f, 0.011f, power01);
 
             if (_pathMaterial != null && _pathMaterial.HasProperty("_EmissionColor"))
@@ -188,10 +190,7 @@ namespace RiftRally.Gameplay
             bool scoring = distance <= GameConfig.RingRadii[0];
             Color c = scoring ? GameConfig.TargetColor : teamColor;
 
-            if (_stopMaterial.HasProperty("_BaseColor"))
-                _stopMaterial.SetColor("_BaseColor", new Color(c.r, c.g, c.b, 0.8f * _shown));
-            if (_stopMaterial.HasProperty("_EmissionColor"))
-                _stopMaterial.SetColor("_EmissionColor", c * (scoring ? 3.4f : 1.6f));
+            ProceduralArt.SetGlowFade(_stopMaterial, c, 0.8f * _shown, scoring ? 3.4f : 1.6f);
         }
 
         private void ShowBounceMarkers(Color teamColor)

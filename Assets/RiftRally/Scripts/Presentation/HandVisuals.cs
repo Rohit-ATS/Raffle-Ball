@@ -162,25 +162,9 @@ namespace RiftRally.Presentation
         }
 
         private static void SetColor(Material material, Color color, float alpha)
-        {
-            if (material == null) return;
-            Color c = new Color(color.r, color.g, color.b, Mathf.Clamp01(alpha));
-
-            if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", c);
-            if (material.HasProperty("_Color")) material.SetColor("_Color", c);
-            if (material.HasProperty("_EmissionColor"))
-                material.SetColor("_EmissionColor", color * (1.6f * Mathf.Clamp01(alpha)));
-        }
+            => ProceduralArt.SetGlowFade(material, color, alpha, 1.6f);
 
         private static void SetAlpha(Material material, float alpha)
-        {
-            if (material == null) return;
-            if (material.HasProperty("_BaseColor"))
-            {
-                Color c = material.GetColor("_BaseColor");
-                c.a = alpha;
-                material.SetColor("_BaseColor", c);
-            }
-        }
+            => ProceduralArt.SetGlowFade(material, Color.white, alpha);
     }
 }

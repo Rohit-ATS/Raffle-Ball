@@ -20,8 +20,15 @@ namespace RiftRally.Core
         /// <summary>Radii of the scoring rings, outermost first.</summary>
         public static readonly float[] RingRadii = { 0.17f, 0.11f, 0.055f };
 
-        /// <summary>Launch line: stones are released from behind this near-end offset.</summary>
-        public const float LaunchLineFromNearEnd = 0.20f;
+        /// <summary>
+        /// Launch line: stones are released from behind this near-end offset.
+        ///
+        /// It must exceed <see cref="MaxPullDistance"/>, because the pull happens on the ice
+        /// behind the stone. At 0.20 m it did not: a pull of more than 0.23 m dragged the
+        /// stone past the open near edge, so releasing a hard throw deleted it as out of
+        /// bounds. ConfigTests pins the relationship.
+        /// </summary>
+        public const float LaunchLineFromNearEnd = 0.40f;
 
         // ---- Stones ----
         public const int StonesPerPlayerPerRound = 3;

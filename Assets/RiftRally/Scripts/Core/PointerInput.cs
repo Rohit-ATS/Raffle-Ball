@@ -76,5 +76,18 @@ namespace RiftRally.Core
             get => false;
 #endif
         }
+
+        /// <summary>Keyboard pinch alternative for Windows builds without a mouse.</summary>
+        public static bool KeyboardPinchHeld
+        {
+#if ENABLE_INPUT_SYSTEM
+            get => Keyboard.current != null
+                   && (Keyboard.current.leftCtrlKey.isPressed || Keyboard.current.rightCtrlKey.isPressed);
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            get => Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+#else
+            get => false;
+#endif
+        }
     }
 }

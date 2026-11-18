@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using RiftRally.Core;
 using RiftRally.Gameplay;
@@ -53,6 +54,18 @@ namespace RiftRally.Setup
         [Tooltip("Apply the VR render quality preset and hold the frame rate budget.")]
         public bool ApplyQualitySettings = true;
 
+        [Header("World")]
+        [Tooltip("Build a different procedural landscape around the rink each launch.")]
+        public bool CreateProceduralEnvironment = true;
+
+        public string EnvironmentName { get; private set; }
+
+        [Tooltip("Simulate the headset and hands when no XR device is present, so the game " +
+                 "can be played and tested on a desktop through the real VR code path.")]
+        public bool SimulateVrOnDesktop = true;
+
+        public DesktopVrSimulator Simulator { get; private set; }
+
         public QualityTuner.Preset Quality = QualityTuner.Preset.Balanced;
 
         [Header("Multiplayer")]
@@ -103,11 +116,34 @@ namespace RiftRally.Setup
             RinkBuilder.Built built = RinkBuilder.Build(RinkRoot);
             Playfield = built.Playfield;
 
+            if (CreateProceduralEnvironment)
+            {
+                Color sky;
+                int seed = unchecked((int)DateTime.Now.Ticks) ^ GetInstanceID();
+                EnvironmentName = EnvironmentBuilder.Build(transform, seed, out sky);
+                SetWorldSky(sky);
+                Debug.Log($"[RiftRally] Procedural environment: {EnvironmentName} ({seed}).");
+            }
+
+            Debug.Log($"[RiftRally] Rink built; drawing with shader '{ProceduralArt.ShaderReport}'.");
+
             // ---- hands ----
             Hands = GetComponent<HandInput>();
             if (Hands == null) Hands = gameObject.AddComponent<HandInput>();
             Hands.TrackingSpace = FindTrackingSpace();
             Hands.DesktopPlaneHeight = Playfield.StoneCenterY;
+
+            // With no headset attached, stand in for one. Added before anything reads hands
+            // so the first frame already has them.
+            if (SimulateVrOnDesktop && !UnityEngine.XR.XRSettings.isDeviceActive)
+            {
+                var simGo = new GameObject("DesktopVrSimulator");
+                simGo.transform.SetParent(transform, false);
+                Simulator = simGo.AddComponent<DesktopVrSimulator>();
+                Simulator.Head = Camera.main != null ? Camera.main.transform : null;
+
+                ReleaseCameraFromPoseDrivers(Simulator.Head);
+            }
 
             // ---- throwing ----
             var launcherGo = new GameObject("StoneLauncher");
@@ -216,6 +252,32 @@ namespace RiftRally.Setup
         }
 
         /// <summary>
+        /// Switches off anything driving the camera from a tracked device.
+        ///
+        /// The XR rig's pose driver keeps writing the camera transform even with no headset
+        /// connected, which would pin the view at the origin and silently undo every move the
+        /// simulator makes. Components are matched by type name rather than by type so this
+        /// keeps working across XR package versions, and so the game does not take a
+        /// compile-time dependency on a package it only needs when a rig happens to be present.
+        /// </summary>
+        private static void ReleaseCameraFromPoseDrivers(Transform head)
+        {
+            if (head == null) return;
+
+            foreach (var behaviour in head.GetComponents<Behaviour>())
+            {
+                if (behaviour == null) continue;
+
+                string name = behaviour.GetType().Name;
+                if (name.Contains("TrackedPoseDriver") || name.Contains("CameraOffset"))
+                {
+                    behaviour.enabled = false;
+                    Debug.Log($"[RiftRally] Desktop simulator disabled {name} on the camera.");
+                }
+            }
+        }
+
+        /// <summary>
         /// Physics is tuned for thin fast discs: a short fixed step and generous solver
         /// iterations, because a stone at full speed crosses its own radius in roughly one
         /// default step, which is exactly when collisions start being missed.
@@ -242,8 +304,18 @@ namespace RiftRally.Setup
                 cam.nearClipPlane = 0.02f;
                 cam.farClipPlane = 50f;
                 cam.fieldOfView = 62f;
-                cam.backgroundColor = new Color(0.03f, 0.04f, 0.06f);
+                cam.backgroundColor = new Color(0.12f, 0.10f, 0.14f);
                 cam.clearFlags = CameraClearFlags.SolidColor;
+            }
+
+            // Whatever camera we ended up with - ours or the XR rig's - gets the current
+            // environment's sky color before the biome is applied below.
+            if (Camera.main != null)
+            {
+                Camera main = Camera.main;
+                main.clearFlags = CameraClearFlags.SolidColor;
+                main.backgroundColor = new Color(0.12f, 0.10f, 0.14f);
+                main.nearClipPlane = Mathf.Min(main.nearClipPlane, 0.02f);
             }
 
             bool haveLight = false;
@@ -263,6 +335,22 @@ namespace RiftRally.Setup
                 light.intensity = 1.05f;
                 light.color = new Color(0.92f, 0.95f, 1f);
                 light.shadows = LightShadows.Soft;
+            }
+        }
+
+        private static void SetWorldSky(Color sky)
+        {
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+            RenderSettings.ambientLight = Color.Lerp(sky, Color.white, 0.20f);
+            RenderSettings.fog = true;
+            RenderSettings.fogColor = sky;
+            RenderSettings.fogMode = FogMode.ExponentialSquared;
+            RenderSettings.fogDensity = 0.018f;
+
+            if (Camera.main != null)
+            {
+                Camera.main.clearFlags = CameraClearFlags.SolidColor;
+                Camera.main.backgroundColor = sky;
             }
         }
 
@@ -287,6 +375,21 @@ namespace RiftRally.Setup
         private void Update()
         {
             if (Match == null || DemoMatch) return;
+
+            // On a desktop, Enter starts a solo match straight away. This exists so the game
+            // can be exercised without working through the lobby - useful when checking a
+            // build, and the only way to drive it from an automated launch.
+            if (Simulator != null && DesktopInput.PressedThisFrame(SimKey.Confirm))
+            {
+                bool idle = Match.State == MatchState.Attract
+                            || Match.State == MatchState.MatchOver;
+                if (idle)
+                {
+                    if (Menu != null) Menu.Hide();
+                    Match.StartMatch(GameMode.SoloVsAi);
+                    return;
+                }
+            }
 
             // With the lobby built, starting a match is the menu's job: a stray pinch while
             // reading the leaderboard must not drop the player into a solo game.

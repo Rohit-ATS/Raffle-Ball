@@ -61,11 +61,20 @@ namespace RiftRally.Core
         [Tooltip("Transform that hand joint poses are relative to. Normally the XR Origin.")]
         public Transform TrackingSpace;
 
-        [Tooltip("Drive the right hand with the mouse when no XR hand tracking is present.")]
+        [Tooltip("Accept simulated hands when no XR hand tracking is present.")]
         public bool AllowDesktopFallback = true;
 
-        [Tooltip("Plane height used by the desktop mouse fallback.")]
+        [Tooltip("Unused by the simulator; kept so existing scenes do not lose a value.")]
         public float DesktopPlaneHeight = GameConfig.RinkHeight;
+
+        /// <summary>
+        /// Supplies hands when there is no headset. Set by the desktop VR simulator, which
+        /// feeds world-space pinch points in exactly the form a real subsystem produces, so
+        /// everything downstream - grabbing, pulling, pinch hysteresis, hand visuals, the
+        /// menu buttons - runs the same code with or without hardware.
+        /// </summary>
+        public static System.Func<HandSide, (bool tracked, bool pinching, Vector3 position)>
+            SimulatedHandSource;
 
         [Header("Filtering")]
         [Tooltip("Cutoff in Hz while the hand is still. Lower is steadier and laggier.")]
@@ -135,9 +144,10 @@ namespace RiftRally.Core
                 SampleRealHand(HandSide.Left, _subsystem.leftHand);
                 SampleRealHand(HandSide.Right, _subsystem.rightHand);
             }
-            else if (AllowDesktopFallback)
+            else if (AllowDesktopFallback && SimulatedHandSource != null)
             {
-                SampleDesktopFallback();
+                SampleSimulatedHand(HandSide.Left);
+                SampleSimulatedHand(HandSide.Right);
             }
             else
             {
@@ -261,39 +271,50 @@ namespace RiftRally.Core
             _handScale[i] = Mathf.Lerp(_handScale[i], measured, 0.04f);
         }
 
-        private void SampleDesktopFallback()
+        /// <summary>
+        /// Builds a hand sample from the simulator. The pinch gap is synthesised from the
+        /// pinch state rather than measured, so the same hysteresis and strength curve the
+        /// real path uses still applies.
+        /// </summary>
+        private void SampleSimulatedHand(HandSide side)
         {
-            _samples[(int)HandSide.Left] = default;
+            int i = (int)side;
 
-            var cam = Camera.main;
-            if (cam == null) return;
+            if (SimulatedHandSource == null)
+            {
+                _samples[i] = default;
+                return;
+            }
 
-            Ray ray = cam.ScreenPointToRay(PointerInput.Position);
-            var plane = new Plane(Vector3.up, new Vector3(0f, DesktopPlaneHeight, 0f));
+            (bool tracked, bool pinching, Vector3 position) = SimulatedHandSource(side);
 
-            Vector3 point = cam.transform.position + cam.transform.forward * 0.6f;
-            if (plane.Raycast(ray, out float enter)) point = ray.GetPoint(enter);
+            if (!tracked)
+            {
+                _pinchLatched[i] = false;
+                _pinchFilters[i].Reset();
+                _velocity[i].Reset();
+                _samples[i] = default;
+                return;
+            }
 
-            bool held = PointerInput.PrimaryHeld;
-            int i = (int)HandSide.Right;
-            _pinchLatched[i] = held;
-
-            Vector3 pinch = point + Vector3.up * 0.02f;
-            _velocity[i].Add(pinch, Time.time);
+            Vector3 filtered = _pinchFilters[i].Filter(position, Time.deltaTime);
+            _velocity[i].Add(filtered, Time.time);
+            _pinchLatched[i] = pinching;
 
             _samples[i] = new HandSample
             {
                 IsTracked = true,
-                IsPinching = held,
+                IsPinching = pinching,
                 Confidence = 1f,
-                PinchStrength = held ? 1f : 0f,
-                PinchPoint = pinch,
-                RawPinchPoint = pinch,
-                PalmPosition = point + Vector3.up * 0.05f,
-                PalmRotation = Quaternion.LookRotation(Vector3.forward, Vector3.up),
+                PinchStrength = pinching ? 1f : 0f,
+                PinchPoint = filtered,
+                RawPinchPoint = position,
+                PalmPosition = filtered - Vector3.up * 0.03f,
+                PalmRotation = Quaternion.identity,
                 Velocity = _velocity[i].Velocity,
                 PeakSpeed = _velocity[i].PeakSpeed,
-                PinchGap = held ? 0.01f : 0.06f,
+                PinchGap = pinching ? GameConfig.PinchEnterDistance * 0.5f
+                                    : GameConfig.PinchExitDistance * 2f,
                 HandScale = 0.18f
             };
         }

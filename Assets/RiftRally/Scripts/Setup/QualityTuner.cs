@@ -45,7 +45,11 @@ namespace RiftRally.Setup
         [Tooltip("Seconds of sustained slow frames before stepping down.")]
         public float AdaptWindow = 4f;
 
+        [Tooltip("Seconds to ignore after start, while the scene is still warming up.")]
+        public float WarmupSeconds = 6f;
+
         private float _slowTime;
+        private float _age;
         private bool _hasSteppedDown;
 
         private void Start()
@@ -104,6 +108,12 @@ namespace RiftRally.Setup
         private void Update()
         {
             if (!AdaptiveQuality || _hasSteppedDown) return;
+
+            // Loading, shader compilation and the first frames of physics all produce long
+            // frames that say nothing about whether the game can hold its budget. Counting
+            // them meant the quality dropped permanently a second after launch, every time.
+            _age += Time.unscaledDeltaTime;
+            if (_age < WarmupSeconds) return;
 
             float budget = 1f / Mathf.Max(30, TargetFrameRate);
 

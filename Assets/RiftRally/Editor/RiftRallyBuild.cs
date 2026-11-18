@@ -59,6 +59,7 @@ namespace RiftRally.EditorTools
             RiftRallySceneTool.RegisterInBuildSettings(scenePath);
 
             ApplyCommonSettings();
+            EnsureShadersSurviveStripping();
 
             string output;
             if (target == BuildTarget.Android)
@@ -102,6 +103,67 @@ namespace RiftRally.EditorTools
                                     $"with {summary.totalErrors} error(s)");
 
             return summary.outputPath;
+        }
+
+        /// <summary>
+        /// Adds the shaders the runtime art looks up by name to the always-included list.
+        ///
+        /// Everything in this game is built from materials created at run time, so no asset
+        /// in the project references URP's Lit shader. Unity therefore has no reason to put
+        /// it in the build, <c>Shader.Find</c> returns null in the player, and the entire
+        /// rink renders as nothing - while looking perfect in the Editor, where the shader is
+        /// always loaded. This is the build-side half of that fix.
+        /// </summary>
+        private static void EnsureShadersSurviveStripping()
+        {
+            string[] wanted =
+            {
+                "Universal Render Pipeline/Lit",
+                "Universal Render Pipeline/Simple Lit",
+                "Universal Render Pipeline/Unlit",
+            };
+
+            var graphics = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/GraphicsSettings.asset");
+            UnityEngine.Object settings = null;
+            foreach (var asset in graphics)
+            {
+                if (asset != null && asset.GetType().Name == "GraphicsSettings") settings = asset;
+            }
+            if (settings == null)
+            {
+                Debug.LogWarning("[RiftRally] Could not open GraphicsSettings to pin shaders.");
+                return;
+            }
+
+            var serialized = new SerializedObject(settings);
+            SerializedProperty list = serialized.FindProperty("m_AlwaysIncludedShaders");
+            if (list == null) return;
+
+            var already = new System.Collections.Generic.HashSet<string>();
+            for (int i = 0; i < list.arraySize; i++)
+            {
+                var entry = list.GetArrayElementAtIndex(i).objectReferenceValue as Shader;
+                if (entry != null) already.Add(entry.name);
+            }
+
+            bool changed = false;
+            foreach (string name in wanted)
+            {
+                if (already.Contains(name)) continue;
+
+                Shader shader = Shader.Find(name);
+                if (shader == null) continue;
+
+                list.InsertArrayElementAtIndex(list.arraySize);
+                list.GetArrayElementAtIndex(list.arraySize - 1).objectReferenceValue = shader;
+                changed = true;
+                Debug.Log($"[RiftRally] Pinned shader into the build: {name}");
+            }
+
+            if (!changed) return;
+
+            serialized.ApplyModifiedProperties();
+            AssetDatabase.SaveAssets();
         }
 
         private static void ApplyCommonSettings()
